@@ -94,6 +94,24 @@ class AmbulanceModel {
     );
   }
 
+  // Convert from raw data with ID (for use with driver service data)
+  factory AmbulanceModel.fromMap(String id, Map<String, dynamic> data) {
+    return AmbulanceModel(
+      id: id,
+      licensePlate: data['licensePlate'] ?? '',
+      model: data['model'] ?? '',
+      status: AmbulanceStatus.fromString(data['status'] ?? 'offline'),
+      currentDriverId: data['currentDriverId'],
+      hospitalId: data['hospitalId'] ?? '',
+      isActive: data['isActive'] ?? true,
+      createdAt: (data['createdAt'] as Timestamp?)?.toDate() ?? DateTime.now(),
+      updatedAt: (data['updatedAt'] as Timestamp?)?.toDate() ?? DateTime.now(),
+      latitude: data['latitude']?.toDouble(),
+      longitude: data['longitude']?.toDouble(),
+      lastLocationUpdate: (data['lastLocationUpdate'] as Timestamp?)?.toDate(),
+    );
+  }
+
   // Convert to Firestore document
   Map<String, dynamic> toFirestore() {
     return {

@@ -87,6 +87,13 @@ class UserModel {
   bool get isDriver => role == UserRole.ambulanceDriver;
   bool get isPolice => role == UserRole.police;
 
+  // Driver-specific helpers
+  bool get isAvailable => roleSpecificData.isAvailable ?? false;
+  bool get hasAssignedAmbulances =>
+      roleSpecificData.assignedAmbulances?.isNotEmpty ?? false;
+  int get assignedAmbulanceCount =>
+      roleSpecificData.assignedAmbulances?.length ?? 0;
+
   // Copy with method for updates
   UserModel copyWith({
     String? email,
@@ -123,6 +130,8 @@ class RoleSpecificData {
   final String? department;
   final List<String>? assignedAmbulances;
   final List<String>? permissions;
+  final bool? isAvailable; // For drivers - their shift availability
+  final DateTime? lastAvailabilityUpdate; // When driver toggled availability
 
   RoleSpecificData({
     this.hospitalId,
@@ -131,6 +140,8 @@ class RoleSpecificData {
     this.department,
     this.assignedAmbulances,
     this.permissions,
+    this.isAvailable,
+    this.lastAvailabilityUpdate,
   });
 
   factory RoleSpecificData.fromMap(Map<String, dynamic> map, UserRole role) {
@@ -141,6 +152,10 @@ class RoleSpecificData {
       department: map['department'],
       assignedAmbulances: List<String>.from(map['assignedAmbulances'] ?? []),
       permissions: List<String>.from(map['permissions'] ?? []),
+      isAvailable: map['isAvailable'],
+      lastAvailabilityUpdate: map['lastAvailabilityUpdate'] != null
+          ? (map['lastAvailabilityUpdate'] as Timestamp).toDate()
+          : null,
     );
   }
 
@@ -152,6 +167,9 @@ class RoleSpecificData {
       if (department != null) 'department': department,
       if (assignedAmbulances != null) 'assignedAmbulances': assignedAmbulances,
       if (permissions != null) 'permissions': permissions,
+      if (isAvailable != null) 'isAvailable': isAvailable,
+      if (lastAvailabilityUpdate != null)
+        'lastAvailabilityUpdate': Timestamp.fromDate(lastAvailabilityUpdate!),
     };
   }
 
@@ -162,8 +180,13 @@ class RoleSpecificData {
   }) {
     return RoleSpecificData(
       hospitalId: hospitalId,
-      permissions:
-          permissions ?? ['manage_ambulances', 'manage_staff', 'view_reports'],
+      permissions: permissions ??
+          [
+            'manage_ambulances',
+            'manage_staff',
+            'view_reports',
+            'assign_ambulances'
+          ],
     );
   }
 
@@ -179,10 +202,13 @@ class RoleSpecificData {
   factory RoleSpecificData.forDriver({
     required String licenseNumber,
     List<String>? assignedAmbulances,
+    bool isAvailable = false, // Default to off-duty
   }) {
     return RoleSpecificData(
       licenseNumber: licenseNumber,
       assignedAmbulances: assignedAmbulances ?? [],
+      isAvailable: isAvailable,
+      lastAvailabilityUpdate: DateTime.now(),
     );
   }
 
@@ -195,5 +221,37 @@ class RoleSpecificData {
       department: department,
       permissions: ['view_routes', 'clear_traffic'],
     );
+  }
+
+  // Helper methods
+  bool get hasHospitalAccess => hospitalId != null && hospitalId!.isNotEmpty;
+  bool get hasDriverLicense =>
+      licenseNumber != null && licenseNumber!.isNotEmpty;
+  bool get hasPoliceCredentials =>
+      badgeNumber != null &&
+      badgeNumber!.isNotEmpty &&
+      department != null &&
+      department!.isNotEmpty;
+
+  // Driver-specific helpers
+  bool get isOnShift => isAvailable ?? false;
+  String get availabilityStatus =>
+      (isAvailable ?? false) ? 'On Shift' : 'Off Shift';
+
+  String get lastAvailabilityUpdateFormatted {
+    if (lastAvailabilityUpdate == null) return 'Never updated';
+
+    final now = DateTime.now();
+    final difference = now.difference(lastAvailabilityUpdate!);
+
+    if (difference.inMinutes < 1) {
+      return 'Just now';
+    } else if (difference.inMinutes < 60) {
+      return '${difference.inMinutes}m ago';
+    } else if (difference.inHours < 24) {
+      return '${difference.inHours}h ago';
+    } else {
+      return '${difference.inDays}d ago';
+    }
   }
 }

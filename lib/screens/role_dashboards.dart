@@ -1,13 +1,15 @@
-// lib/screens/role_dashboards.dart
+// lib/screens/updated_role_dashboards.dart
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../models/user_model.dart';
 import '../providers/auth_provider.dart';
 import 'ambulance_list_screen.dart';
+import 'driver_dashboard_screen.dart';
+import 'hospital_map_screen.dart';
 import 'login_screen.dart';
 
-// Hospital Admin Dashboard
+// Hospital Admin Dashboard with Map Integration
 class HospitalAdminDashboard extends ConsumerWidget {
   const HospitalAdminDashboard({Key? key}) : super(key: key);
 
@@ -20,6 +22,15 @@ class HospitalAdminDashboard extends ConsumerWidget {
       title: 'Hospital Admin Dashboard',
       color: Colors.blue.shade700,
       features: [
+        DashboardFeature(
+          icon: Icons.map,
+          title: 'Live Ambulance Map',
+          subtitle: 'Real-time ambulance tracking',
+          onTap: (context, ref) => Navigator.push(
+            context,
+            MaterialPageRoute(builder: (context) => const HospitalMapScreen()),
+          ),
+        ),
         DashboardFeature(
           icon: Icons.local_shipping,
           title: 'Manage Ambulances',
@@ -34,23 +45,34 @@ class HospitalAdminDashboard extends ConsumerWidget {
           icon: Icons.people,
           title: 'Manage Staff',
           subtitle: 'Handle hospital staff and drivers',
+          onTap: (context, ref) => _showComingSoon(context, 'Staff Management'),
         ),
         DashboardFeature(
           icon: Icons.analytics,
           title: 'View Reports',
           subtitle: 'Access performance analytics',
+          onTap: (context, ref) =>
+              _showComingSoon(context, 'Reports & Analytics'),
+        ),
+        DashboardFeature(
+          icon: Icons.emergency,
+          title: 'Emergency Dispatch',
+          subtitle: 'Coordinate emergency responses',
+          onTap: (context, ref) =>
+              _showComingSoon(context, 'Emergency Dispatch'),
         ),
         DashboardFeature(
           icon: Icons.settings,
           title: 'System Settings',
           subtitle: 'Configure hospital settings',
+          onTap: (context, ref) => _showComingSoon(context, 'System Settings'),
         ),
       ],
     );
   }
 }
 
-// Hospital Staff Dashboard
+// Hospital Staff Dashboard with Map Integration
 class HospitalStaffDashboard extends ConsumerWidget {
   const HospitalStaffDashboard({Key? key}) : super(key: key);
 
@@ -64,69 +86,67 @@ class HospitalStaffDashboard extends ConsumerWidget {
       color: Colors.green.shade700,
       features: [
         DashboardFeature(
+          icon: Icons.map,
+          title: 'Live Ambulance Map',
+          subtitle: 'Track ambulances in real-time',
+          onTap: (context, ref) => Navigator.push(
+            context,
+            MaterialPageRoute(builder: (context) => const HospitalMapScreen()),
+          ),
+        ),
+        DashboardFeature(
           icon: Icons.assignment,
           title: 'Assign Ambulances',
           subtitle: 'Allocate ambulances to emergencies',
+          onTap: (context, ref) =>
+              _showComingSoon(context, 'Emergency Assignment'),
         ),
         DashboardFeature(
-          icon: Icons.map,
-          title: 'View Map',
-          subtitle: 'Track ambulance locations',
+          icon: Icons.local_shipping,
+          title: 'View Ambulances',
+          subtitle: 'Monitor ambulance fleet',
+          onTap: (context, ref) => Navigator.push(
+            context,
+            MaterialPageRoute(
+                builder: (context) => const AmbulanceListScreen()),
+          ),
         ),
         DashboardFeature(
           icon: Icons.history,
           title: 'Recent Assignments',
           subtitle: 'View assignment history',
+          onTap: (context, ref) =>
+              _showComingSoon(context, 'Assignment History'),
         ),
         DashboardFeature(
           icon: Icons.notification_important,
           title: 'Emergency Alerts',
           subtitle: 'Manage incoming emergencies',
+          onTap: (context, ref) => _showComingSoon(context, 'Emergency Alerts'),
+        ),
+        DashboardFeature(
+          icon: Icons.route,
+          title: 'Route Optimization',
+          subtitle: 'Optimize ambulance routes',
+          onTap: (context, ref) =>
+              _showComingSoon(context, 'Route Optimization'),
         ),
       ],
     );
   }
 }
 
-// Ambulance Driver Dashboard
+// Enhanced Ambulance Driver Dashboard
 class AmbulanceDriverDashboard extends ConsumerWidget {
   const AmbulanceDriverDashboard({Key? key}) : super(key: key);
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    return _buildDashboard(
-      context: context,
-      ref: ref,
-      role: UserRole.ambulanceDriver,
-      title: 'Driver Dashboard',
-      color: Colors.orange.shade700,
-      features: [
-        DashboardFeature(
-          icon: Icons.work,
-          title: 'Shift Status',
-          subtitle: 'Clock in/out and manage availability',
-        ),
-        DashboardFeature(
-          icon: Icons.assignment_turned_in,
-          title: 'Active Assignments',
-          subtitle: 'Current emergency responses',
-        ),
-        DashboardFeature(
-          icon: Icons.navigation,
-          title: 'Navigation',
-          subtitle: 'GPS route to destination',
-        ),
-        DashboardFeature(
-          icon: Icons.medical_services,
-          title: 'Ambulance Status',
-          subtitle: 'Vehicle condition and supplies',
-        ),
-      ],
-    );
+    return const DriverDashboardScreen();
   }
 }
 
-// Police Dashboard
+// Police Dashboard with Map Integration
 class PoliceDashboard extends ConsumerWidget {
   const PoliceDashboard({Key? key}) : super(key: key);
 
@@ -140,24 +160,46 @@ class PoliceDashboard extends ConsumerWidget {
       color: Colors.indigo.shade700,
       features: [
         DashboardFeature(
+          icon: Icons.map,
+          title: 'Ambulance Locations',
+          subtitle: 'View all ambulance positions',
+          onTap: (context, ref) => Navigator.push(
+            context,
+            MaterialPageRoute(builder: (context) => const HospitalMapScreen()),
+          ),
+        ),
+        DashboardFeature(
           icon: Icons.route,
           title: 'Active Routes',
           subtitle: 'Monitor ambulance routes',
+          onTap: (context, ref) => _showComingSoon(context, 'Active Routes'),
         ),
         DashboardFeature(
           icon: Icons.traffic,
           title: 'Clear Traffic',
           subtitle: 'Manage traffic clearance',
+          onTap: (context, ref) =>
+              _showComingSoon(context, 'Traffic Management'),
         ),
         DashboardFeature(
           icon: Icons.timer,
           title: 'Route ETAs',
           subtitle: 'Estimated arrival times',
+          onTap: (context, ref) => _showComingSoon(context, 'ETA Monitoring'),
         ),
         DashboardFeature(
           icon: Icons.emergency,
           title: 'Emergency Coordination',
           subtitle: 'Coordinate with hospitals',
+          onTap: (context, ref) =>
+              _showComingSoon(context, 'Emergency Coordination'),
+        ),
+        DashboardFeature(
+          icon: Icons.chat,
+          title: 'Communication Hub',
+          subtitle: 'Direct communication channels',
+          onTap: (context, ref) =>
+              _showComingSoon(context, 'Communication Hub'),
         ),
       ],
     );
@@ -182,14 +224,39 @@ Widget _buildDashboard({
       backgroundColor: color,
       elevation: 0,
       actions: [
+        // Quick access to map for hospital users
+        if (role == UserRole.hospitalAdmin ||
+            role == UserRole.hospitalStaff) ...[
+          IconButton(
+            icon: const Icon(Icons.map, color: Colors.white),
+            onPressed: () => Navigator.push(
+              context,
+              MaterialPageRoute(
+                  builder: (context) => const HospitalMapScreen()),
+            ),
+            tooltip: 'Live Map',
+          ),
+        ],
         PopupMenuButton<String>(
           icon: const Icon(Icons.person, color: Colors.white),
           onSelected: (value) async {
             if (value == 'logout') {
               _showLogoutDialog(context, ref);
+            } else if (value == 'settings') {
+              _showComingSoon(context, 'Settings');
             }
           },
           itemBuilder: (BuildContext context) => [
+            const PopupMenuItem<String>(
+              value: 'settings',
+              child: Row(
+                children: [
+                  Icon(Icons.settings, color: Colors.blue),
+                  SizedBox(width: 8),
+                  Text('Settings'),
+                ],
+              ),
+            ),
             const PopupMenuItem<String>(
               value: 'logout',
               child: Row(
@@ -317,8 +384,7 @@ Widget _buildDashboard({
                 crossAxisCount: 2,
                 mainAxisSpacing: 16,
                 crossAxisSpacing: 16,
-                childAspectRatio:
-                    1.3, // Increased from 1.1 to make cards taller
+                childAspectRatio: 1.3,
               ),
               itemCount: features.length,
               itemBuilder: (context, index) {
@@ -354,59 +420,48 @@ Widget _buildFeatureCard({
         if (feature.onTap != null) {
           feature.onTap!(context, ref);
         } else {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text('${feature.title} coming soon'),
-              backgroundColor: color,
-            ),
-          );
+          _showComingSoon(context, feature.title);
         }
       },
       borderRadius: BorderRadius.circular(16),
       child: Container(
-        padding: const EdgeInsets.all(12), // Reduced from 16 for better fit
+        padding: const EdgeInsets.all(12),
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
             Container(
-              width: 45, // Reduced from 50 to save space
-              height: 45, // Reduced from 50 to save space
+              width: 45,
+              height: 45,
               decoration: BoxDecoration(
                 color: color.withOpacity(0.1),
-                borderRadius:
-                    BorderRadius.circular(22.5), // Adjusted for new size
+                borderRadius: BorderRadius.circular(22.5),
               ),
               child: Icon(
                 feature.icon,
                 color: color,
-                size: 24, // Reduced from 28
+                size: 24,
               ),
             ),
-
-            const SizedBox(height: 10), // Reduced from 12
-
+            const SizedBox(height: 10),
             Text(
               feature.title,
               textAlign: TextAlign.center,
-              maxLines: 2, // Added to prevent overflow
-              overflow: TextOverflow.ellipsis, // Added to handle long titles
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
               style: const TextStyle(
-                fontSize: 13, // Reduced from 14
+                fontSize: 13,
                 fontWeight: FontWeight.bold,
               ),
             ),
-
-            const SizedBox(height: 3), // Reduced from 4
-
+            const SizedBox(height: 3),
             Flexible(
-              // Changed to Flexible to allow text to adjust
               child: Text(
                 feature.subtitle,
                 textAlign: TextAlign.center,
-                maxLines: 2, // Added to prevent overflow
-                overflow: TextOverflow.ellipsis, // Added to handle long text
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
                 style: TextStyle(
-                  fontSize: 10, // Reduced from 11
+                  fontSize: 10,
                   color: Colors.grey.shade600,
                   height: 1.2,
                 ),
@@ -443,6 +498,20 @@ String _getRoleTitle(UserRole role) {
     case UserRole.police:
       return 'Police Officer';
   }
+}
+
+void _showComingSoon(BuildContext context, String feature) {
+  ScaffoldMessenger.of(context).showSnackBar(
+    SnackBar(
+      content: Text('$feature coming soon'),
+      backgroundColor: Colors.blue.shade700,
+      action: SnackBarAction(
+        label: 'OK',
+        textColor: Colors.white,
+        onPressed: () {},
+      ),
+    ),
+  );
 }
 
 // Dashboard feature model

@@ -3,7 +3,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../models/ambulance_model.dart';
+import '../models/user_model.dart';
 import '../providers/ambulance_providers.dart';
+import '../providers/driver_providers.dart';
 import 'create_ambulance_screen.dart';
 
 class AmbulanceDetailsScreen extends ConsumerWidget {
@@ -476,56 +478,9 @@ class AmbulanceDetailsScreen extends ConsumerWidget {
   }
 
   void _showAssignDriverDialog(BuildContext context, WidgetRef ref) {
-    final driverIdController = TextEditingController();
-
     showDialog(
       context: context,
-      builder: (context) => AlertDialog(
-        title: Text('Assign Driver to ${ambulance.licensePlate}'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const Text('Enter the driver ID to assign to this ambulance:'),
-            const SizedBox(height: 16),
-            TextField(
-              controller: driverIdController,
-              decoration: const InputDecoration(
-                labelText: 'Driver ID',
-                border: OutlineInputBorder(),
-              ),
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Cancel'),
-          ),
-          ElevatedButton(
-            onPressed: () async {
-              if (driverIdController.text.trim().isNotEmpty) {
-                Navigator.pop(context);
-                final actions = ref.read(ambulanceActionsProvider);
-                final success = await actions.assignDriver(
-                  ambulance.id,
-                  driverIdController.text.trim(),
-                );
-                if (success && context.mounted) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(
-                        content: Text('Driver assigned successfully')),
-                  );
-                }
-              }
-            },
-            style: ElevatedButton.styleFrom(
-              backgroundColor: Colors.blue.shade700,
-              foregroundColor: Colors.white,
-            ),
-            child: const Text('Assign'),
-          ),
-        ],
-      ),
+      builder: (context) => _AssignDriverDialog(ambulance: ambulance),
     );
   }
 
@@ -539,6 +494,246 @@ class AmbulanceDetailsScreen extends ConsumerWidget {
         return 'Under maintenance or repair';
       case AmbulanceStatus.offline:
         return 'Not in service';
+    }
+  }
+}
+
+// Assign Driver Dialog Widget
+class _AssignDriverDialog extends ConsumerStatefulWidget {
+  final AmbulanceModel ambulance;
+
+  const _AssignDriverDialog({required this.ambulance});
+
+  @override
+  ConsumerState<_AssignDriverDialog> createState() =>
+      _AssignDriverDialogState();
+}
+
+class _AssignDriverDialogState extends ConsumerState<_AssignDriverDialog> {
+  UserModel? selectedDriver;
+
+  @override
+  Widget build(BuildContext context) {
+    final availableDriversAsync =
+        ref.watch(availableDriversProvider(widget.ambulance.hospitalId));
+    final isLoading = ref.watch(driverLoadingProvider);
+    final error = ref.watch(driverErrorProvider);
+
+    return AlertDialog(
+      title: Text('Assign Driver to ${widget.ambulance.licensePlate}'),
+      content: SizedBox(
+        width: double.maxFinite,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text('Select an available driver:'),
+            const SizedBox(height: 16),
+
+            // Error message
+            if (error != null) ...[
+              Container(
+                padding: const EdgeInsets.all(8),
+                margin: const EdgeInsets.only(bottom: 16),
+                decoration: BoxDecoration(
+                  color: Colors.red.shade50,
+                  border: Border.all(color: Colors.red.shade200),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child:
+                    Text(error, style: TextStyle(color: Colors.red.shade700)),
+              ),
+            ],
+
+            // Driver dropdown
+            availableDriversAsync.when(
+              data: (drivers) {
+                if (drivers.isEmpty) {
+                  return Container(
+                    padding: const EdgeInsets.all(16),
+                    decoration: BoxDecoration(
+                      color: Colors.orange.shade50,
+                      border: Border.all(color: Colors.orange.shade200),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Row(
+                      children: [
+                        Icon(Icons.warning_amber,
+                            color: Colors.orange.shade700),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            'No available drivers found. Make sure drivers are on shift and not assigned to active ambulances.',
+                            style: TextStyle(color: Colors.orange.shade700),
+                          ),
+                        ),
+                      ],
+                    ),
+                  );
+                }
+
+                return Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+                  decoration: BoxDecoration(
+                    border: Border.all(color: Colors.grey.shade300),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: DropdownButton<UserModel>(
+                    value: selectedDriver,
+                    hint: const Text('Select a driver'),
+                    isExpanded: true,
+                    underline: const SizedBox(),
+                    items: drivers.map((driver) {
+                      return DropdownMenuItem<UserModel>(
+                        value: driver,
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              driver.fullName,
+                              style: const TextStyle(
+                                fontWeight: FontWeight.w500,
+                              ),
+                            ),
+                            Text(
+                              'License: ${driver.roleSpecificData.licenseNumber}',
+                              style: TextStyle(
+                                fontSize: 12,
+                                color: Colors.grey.shade600,
+                              ),
+                            ),
+                          ],
+                        ),
+                      );
+                    }).toList(),
+                    onChanged: (driver) {
+                      setState(() {
+                        selectedDriver = driver;
+                      });
+                      ref.read(driverErrorProvider.notifier).state = null;
+                    },
+                  ),
+                );
+              },
+              loading: () => const Center(
+                child: Padding(
+                  padding: EdgeInsets.all(16.0),
+                  child: CircularProgressIndicator(),
+                ),
+              ),
+              error: (error, stack) => Container(
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  color: Colors.red.shade50,
+                  border: Border.all(color: Colors.red.shade200),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Text(
+                  'Error loading drivers: $error',
+                  style: TextStyle(color: Colors.red.shade700),
+                ),
+              ),
+            ),
+
+            if (selectedDriver != null) ...[
+              const SizedBox(height: 16),
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: Colors.blue.shade50,
+                  border: Border.all(color: Colors.blue.shade200),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Selected Driver Details:',
+                      style: TextStyle(
+                        fontWeight: FontWeight.bold,
+                        color: Colors.blue.shade700,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Text('Name: ${selectedDriver!.fullName}'),
+                    Text('Email: ${selectedDriver!.email}'),
+                    Text('Phone: ${selectedDriver!.phoneNumber}'),
+                    Text(
+                        'License: ${selectedDriver!.roleSpecificData.licenseNumber}'),
+                    if (selectedDriver!
+                            .roleSpecificData.assignedAmbulances?.isNotEmpty ==
+                        true)
+                      Text(
+                        'Currently assigned to ${selectedDriver!.roleSpecificData.assignedAmbulances!.length} ambulance(s)',
+                        style: TextStyle(
+                          color: Colors.orange.shade700,
+                          fontSize: 12,
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+            ],
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: isLoading ? null : () => Navigator.pop(context),
+          child: const Text('Cancel'),
+        ),
+        ElevatedButton(
+          onPressed:
+              (selectedDriver == null || isLoading) ? null : _assignDriver,
+          style: ElevatedButton.styleFrom(
+            backgroundColor: Colors.blue.shade700,
+            foregroundColor: Colors.white,
+          ),
+          child: isLoading
+              ? const SizedBox(
+                  width: 16,
+                  height: 16,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+                    valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+                  ),
+                )
+              : const Text('Assign Driver'),
+        ),
+      ],
+    );
+  }
+
+  Future<void> _assignDriver() async {
+    if (selectedDriver == null) return;
+
+    final driverActions = ref.read(driverActionsProvider);
+    final ambulanceActions = ref.read(ambulanceActionsProvider);
+
+    // First assign ambulance to driver (updates driver's assigned ambulances list)
+    final success1 = await driverActions.assignAmbulanceToDriver(
+      selectedDriver!.id,
+      widget.ambulance.id,
+    );
+
+    if (success1) {
+      // Then update ambulance with current driver
+      final success2 = await ambulanceActions.assignDriver(
+        widget.ambulance.id,
+        selectedDriver!.id,
+      );
+
+      if (success2 && mounted) {
+        Navigator.pop(context);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+                '${selectedDriver!.fullName} assigned to ${widget.ambulance.licensePlate}'),
+            backgroundColor: Colors.green,
+          ),
+        );
+      }
     }
   }
 }

@@ -572,6 +572,18 @@ class _AssignDriverDialogState extends ConsumerState<_AssignDriverDialog> {
                   );
                 }
 
+                // Reset selected driver if it's not in the current list
+                if (selectedDriver != null &&
+                    !drivers.any((driver) => driver.id == selectedDriver!.id)) {
+                  WidgetsBinding.instance.addPostFrameCallback((_) {
+                    if (mounted) {
+                      setState(() {
+                        selectedDriver = null;
+                      });
+                    }
+                  });
+                }
+
                 return Container(
                   padding:
                       const EdgeInsets.symmetric(horizontal: 12, vertical: 4),

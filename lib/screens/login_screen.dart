@@ -368,10 +368,10 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
         destination = const HospitalAdminDashboard();
         break;
       case UserRole.hospitalStaff:
-        destination = const HospitalStaffDashboard();
+        destination = const HospitalAdminDashboard();
         break;
       case UserRole.ambulanceDriver:
-        destination = const AmbulanceDriverDashboard();
+        destination = const DriverDashboard();
         break;
       case UserRole.police:
         destination = const PoliceDashboard();

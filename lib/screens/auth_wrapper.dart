@@ -157,9 +157,9 @@ class _AuthWrapperState extends ConsumerState<AuthWrapper> {
       case UserRole.hospitalAdmin:
         return const HospitalAdminDashboard();
       case UserRole.hospitalStaff:
-        return const HospitalStaffDashboard();
+        return const HospitalAdminDashboard();
       case UserRole.ambulanceDriver:
-        return const AmbulanceDriverDashboard();
+        return const DriverDashboard();
       case UserRole.police:
         return const PoliceDashboard();
     }

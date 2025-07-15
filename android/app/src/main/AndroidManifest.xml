@@ -3,6 +3,15 @@
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_BACKGROUND_LOCATION" />
     <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.VIBRATE" />
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+
+    <!-- Background Service Permissions -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+
     <application
         android:label="ambulance_app"
         android:name="${applicationName}"
@@ -44,6 +53,31 @@
         <meta-data
             android:name="com.google.android.geo.API_KEY"
             android:value="AIzaSyCCd8GvC_IoSqz_MoiW8CNAdl4D28vuSWA" />
+
+        <!-- Firebase Messaging Service -->
+<!--        <service-->
+<!--            android:name="com.google.firebase.messaging.FirebaseMessagingService"-->
+<!--            android:exported="false" />-->
+
+        <!-- Local Notifications Receiver -->
+        <!-- Local Notifications Receiver -->
+<!--        <receiver android:name="com.dexterous.flutterlocalnotifications.ScheduledNotificationReceiver"-->
+<!--            android:exported="false" />-->
+
+<!--        <receiver android:name="com.dexterous.flutterlocalnotifications.ScheduledNotificationBootReceiver"-->
+<!--            android:exported="false">-->
+<!--            <intent-filter>-->
+<!--                <action android:name="android.intent.action.BOOT_COMPLETED"/>-->
+<!--                <action android:name="android.intent.action.MY_PACKAGE_REPLACED"/>-->
+<!--                <action android:name="android.intent.action.QUICKBOOT_POWERON" />-->
+<!--                <category android:name="android.intent.category.DEFAULT" />-->
+<!--            </intent-filter>-->
+<!--        </receiver>-->
+        <!-- WorkManager Service -->
+<!--        <service-->
+<!--            android:name="androidx.work.impl.foreground.SystemForegroundService"-->
+<!--            android:foregroundServiceType="location" />-->
+
     </application>
     <!-- Required to query activities that can process text, see:
          https://developer.android.com/training/package-visibility?hl=en and

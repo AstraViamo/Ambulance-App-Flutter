@@ -12,6 +12,7 @@ import '../utils/polyline_decoder.dart';
 import 'emergency_details_screen.dart';
 import 'emergency_list_screen.dart';
 import 'live_emergency_map_screen.dart';
+import 'login_screen.dart';
 
 class HospitalDashboard extends ConsumerStatefulWidget {
   const HospitalDashboard({Key? key}) : super(key: key);
@@ -88,6 +89,38 @@ class _HospitalDashboardState extends ConsumerState<HospitalDashboard>
             icon: const Icon(Icons.notifications, color: Colors.white),
             onPressed: _showNotifications,
             tooltip: 'Notifications',
+          ),
+          PopupMenuButton<String>(
+            icon: const Icon(Icons.person, color: Colors.white),
+            onSelected: (value) async {
+              if (value == 'logout') {
+                _showLogoutDialog(context, ref);
+              } else if (value == 'settings') {
+                _showComingSoon(context, 'Settings');
+              }
+            },
+            itemBuilder: (BuildContext context) => [
+              const PopupMenuItem<String>(
+                value: 'settings',
+                child: Row(
+                  children: [
+                    Icon(Icons.settings, color: Colors.blue),
+                    SizedBox(width: 8),
+                    Text('Settings'),
+                  ],
+                ),
+              ),
+              const PopupMenuItem<String>(
+                value: 'logout',
+                child: Row(
+                  children: [
+                    Icon(Icons.logout, color: Colors.red),
+                    SizedBox(width: 8),
+                    Text('Sign Out'),
+                  ],
+                ),
+              ),
+            ],
           ),
         ],
         bottom: TabBar(
@@ -391,7 +424,7 @@ class _HospitalDashboardState extends ConsumerState<HospitalDashboard>
               () => Navigator.push(
                 context,
                 MaterialPageRoute(
-                  builder: (context) => const EmergencyListScreen(),
+                  builder: (context) => EmergencyListScreen(),
                 ),
               ),
             ),
@@ -413,7 +446,7 @@ class _HospitalDashboardState extends ConsumerState<HospitalDashboard>
               () => Navigator.push(
                 context,
                 MaterialPageRoute(
-                  builder: (context) => const EmergencyListScreen(),
+                  builder: (context) => EmergencyListScreen(),
                 ),
               ),
             ),
@@ -1026,6 +1059,71 @@ class _HospitalDashboardState extends ConsumerState<HospitalDashboard>
       const SnackBar(
         content: Text('Notifications feature coming soon'),
         backgroundColor: Colors.blue,
+      ),
+    );
+  }
+
+  void _showLogoutDialog(BuildContext context, WidgetRef ref) {
+    showDialog(
+      context: context,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          title: const Row(
+            children: [
+              Icon(Icons.logout, color: Colors.red),
+              SizedBox(width: 8),
+              Text('Sign Out'),
+            ],
+          ),
+          content: const Text('Are you sure you want to sign out?'),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text('Cancel'),
+            ),
+            ElevatedButton(
+              onPressed: () async {
+                Navigator.of(context).pop();
+                try {
+                  final authService = ref.read(authServiceProvider);
+                  await authService.signOut();
+                  if (context.mounted) {
+                    Navigator.of(context).pushAndRemoveUntil(
+                      MaterialPageRoute(
+                        builder: (context) => const LoginScreen(),
+                      ),
+                      (route) => false,
+                    );
+                  }
+                } catch (e) {
+                  if (context.mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        content: Text('Error signing out: ${e.toString()}'),
+                        backgroundColor: Colors.red,
+                      ),
+                    );
+                  }
+                }
+              },
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.red,
+                foregroundColor: Colors.white,
+              ),
+              child: const Text('Sign Out'),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  void _showComingSoon(BuildContext context, String featureName) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text('$featureName feature coming soon!'),
+        backgroundColor: Colors.blue,
+        behavior: SnackBarBehavior.floating,
       ),
     );
   }

@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../models/route_model.dart';
 import '../providers/auth_provider.dart';
 import '../providers/route_providers.dart';
+import 'login_screen.dart';
 import 'police_route_details_screen.dart';
 import 'police_route_map_screen.dart';
 
@@ -66,6 +67,38 @@ class _PoliceDashboardScreenState extends ConsumerState<PoliceDashboardScreen>
               );
             },
             tooltip: 'Map View',
+          ),
+          PopupMenuButton<String>(
+            icon: const Icon(Icons.person, color: Colors.white),
+            onSelected: (value) async {
+              if (value == 'logout') {
+                _showLogoutDialog(context, ref);
+              } else if (value == 'settings') {
+                _showComingSoon(context, 'Settings');
+              }
+            },
+            itemBuilder: (BuildContext context) => [
+              const PopupMenuItem<String>(
+                value: 'settings',
+                child: Row(
+                  children: [
+                    Icon(Icons.settings, color: Colors.blue),
+                    SizedBox(width: 8),
+                    Text('Settings'),
+                  ],
+                ),
+              ),
+              const PopupMenuItem<String>(
+                value: 'logout',
+                child: Row(
+                  children: [
+                    Icon(Icons.logout, color: Colors.red),
+                    SizedBox(width: 8),
+                    Text('Sign Out'),
+                  ],
+                ),
+              ),
+            ],
           ),
         ],
         bottom: TabBar(
@@ -654,5 +687,70 @@ class _PoliceDashboardScreenState extends ConsumerState<PoliceDashboardScreen>
     } else {
       return '${difference.inDays}d ago';
     }
+  }
+
+  void _showLogoutDialog(BuildContext context, WidgetRef ref) {
+    showDialog(
+      context: context,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          title: const Row(
+            children: [
+              Icon(Icons.logout, color: Colors.red),
+              SizedBox(width: 8),
+              Text('Sign Out'),
+            ],
+          ),
+          content: const Text('Are you sure you want to sign out?'),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text('Cancel'),
+            ),
+            ElevatedButton(
+              onPressed: () async {
+                Navigator.of(context).pop();
+                try {
+                  final authService = ref.read(authServiceProvider);
+                  await authService.signOut();
+                  if (context.mounted) {
+                    Navigator.of(context).pushAndRemoveUntil(
+                      MaterialPageRoute(
+                        builder: (context) => const LoginScreen(),
+                      ),
+                      (route) => false,
+                    );
+                  }
+                } catch (e) {
+                  if (context.mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        content: Text('Error signing out: ${e.toString()}'),
+                        backgroundColor: Colors.red,
+                      ),
+                    );
+                  }
+                }
+              },
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.red,
+                foregroundColor: Colors.white,
+              ),
+              child: const Text('Sign Out'),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  void _showComingSoon(BuildContext context, String featureName) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text('$featureName feature coming soon!'),
+        backgroundColor: Colors.blue,
+        behavior: SnackBarBehavior.floating,
+      ),
+    );
   }
 }

@@ -1,15 +1,22 @@
 // lib/providers/emergency_providers.dart
 import 'dart:async';
 
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../models/ambulance_model.dart';
 import '../models/emergency_model.dart';
+import '../services/ambulance_assignment_service.dart';
 import '../services/emergency_service.dart';
 
 // Emergency service provider
 final emergencyServiceProvider = Provider<EmergencyService>((ref) {
   return EmergencyService();
+});
+
+final ambulanceAssignmentServiceProvider =
+    Provider<AmbulanceAssignmentService>((ref) {
+  return AmbulanceAssignmentService();
 });
 
 // All emergencies for hospital provider
@@ -156,10 +163,13 @@ final emergencyFormProvider =
   (ref) => EmergencyFormNotifier(),
 );
 
-// Emergency assignment provider
+// Emergency assignment provider (UPDATED)
 final emergencyAssignmentProvider = StateNotifierProvider<
     EmergencyAssignmentNotifier, EmergencyAssignmentState>(
-  (ref) => EmergencyAssignmentNotifier(ref.watch(emergencyServiceProvider)),
+  (ref) => EmergencyAssignmentNotifier(
+    ref.watch(emergencyServiceProvider),
+    ref.watch(ambulanceAssignmentServiceProvider), // Added assignment service
+  ),
 );
 
 // Place suggestions notifier
@@ -324,8 +334,10 @@ class EmergencyAssignmentState {
 class EmergencyAssignmentNotifier
     extends StateNotifier<EmergencyAssignmentState> {
   final EmergencyService _emergencyService;
+  final AmbulanceAssignmentService _ambulanceAssignmentService;
 
-  EmergencyAssignmentNotifier(this._emergencyService)
+  EmergencyAssignmentNotifier(
+      this._emergencyService, this._ambulanceAssignmentService)
       : super(EmergencyAssignmentState());
 
   Future<void> findNearestAmbulance({
@@ -356,7 +368,7 @@ class EmergencyAssignmentNotifier
         state = state.copyWith(
           isLoading: false,
           nearestAmbulance: ambulance,
-          distance: distance,
+          distance: distance / 1000,
           isAssigned: false,
         );
       } else {
@@ -381,10 +393,88 @@ class EmergencyAssignmentNotifier
     state = state.copyWith(isLoading: true, error: null);
 
     try {
-      final success = await _emergencyService.assignAmbulanceToEmergency(
+      final emergencyDoc = await FirebaseFirestore.instance
+          .collection('emergencies')
+          .doc(emergencyId)
+          .get();
+
+      final ambulanceDoc = await FirebaseFirestore.instance
+          .collection('ambulances')
+          .doc(ambulanceId)
+          .get();
+
+      if (!emergencyDoc.exists || !ambulanceDoc.exists) {
+        throw Exception('Emergency or ambulance not found');
+      }
+
+      final emergency = EmergencyModel.fromFirestore(emergencyDoc);
+      final ambulance = AmbulanceModel.fromFirestore(ambulanceDoc);
+
+      // Check if ambulance has location for route calculation
+      if (ambulance.latitude != null && ambulance.longitude != null) {
+        // Calculate distance and estimated time
+        final distance = _ambulanceAssignmentService.calculateHaversineDistance(
+          lat1: ambulance.latitude!,
+          lon1: ambulance.longitude!,
+          lat2: emergency.patientLat,
+          lon2: emergency.patientLng,
+        );
+
+        // Estimate travel time (assuming 60 km/h average speed in emergency)
+        final estimatedTimeMinutes = ((distance / 1000) / 60 * 60).round();
+
+        // Use the ENHANCED assignment method that creates routes
+        final success = await _ambulanceAssignmentService
+            .assignAmbulanceToEmergencyWithRoute(
+          emergencyId: emergencyId,
+          ambulanceId: ambulanceId,
+          driverId: driverId,
+          distance: distance,
+          estimatedArrivalTime: estimatedTimeMinutes,
+        );
+
+        state = state.copyWith(
+          isLoading: false,
+          isAssigned: success,
+        );
+
+        return success;
+      } else {
+        // Fallback to basic assignment if no location data
+        final success = await _emergencyService.assignAmbulanceToEmergency(
+          emergencyId: emergencyId,
+          ambulanceId: ambulanceId,
+          driverId: driverId,
+        );
+
+        state = state.copyWith(
+          isLoading: false,
+          isAssigned: success,
+        );
+
+        return success;
+      }
+    } catch (e) {
+      state = state.copyWith(
+        isLoading: false,
+        error: e.toString(),
+      );
+      return false;
+    }
+  }
+
+  // New method for auto-assignment with route creation
+  Future<bool> autoAssignNearestAmbulance({
+    required String emergencyId,
+    required String hospitalId,
+  }) async {
+    state = state.copyWith(isLoading: true, error: null);
+
+    try {
+      final success =
+          await _ambulanceAssignmentService.autoAssignNearestAmbulanceWithRoute(
         emergencyId: emergencyId,
-        ambulanceId: ambulanceId,
-        driverId: driverId,
+        hospitalId: hospitalId,
       );
 
       state = state.copyWith(
@@ -405,14 +495,27 @@ class EmergencyAssignmentNotifier
   void clearAssignment() {
     state = EmergencyAssignmentState();
   }
+
+  void setLoading(bool loading) {
+    state = state.copyWith(isLoading: loading);
+  }
+
+  void setAssigned(bool assigned) {
+    state = state.copyWith(isAssigned: assigned);
+  }
 }
+
+// Ambulance assignment provider (alias for backward compatibility)
+final ambulanceAssignmentProvider = emergencyAssignmentProvider;
 
 // Emergency actions class for CRUD operations
 class EmergencyActions {
   final EmergencyService _service;
+  final AmbulanceAssignmentService _assignmentService;
+
   final Ref _ref;
 
-  EmergencyActions(this._service, this._ref);
+  EmergencyActions(this._service, this._assignmentService, this._ref);
 
   Future<String?> createEmergency(EmergencyModel emergency) async {
     try {
@@ -514,10 +617,119 @@ class EmergencyActions {
       _ref.read(emergencyLoadingProvider.notifier).state = false;
     }
   }
+
+  // UPDATED: Now uses enhanced assignment with route creation
+  Future<bool> assignAmbulance({
+    required String emergencyId,
+    required String ambulanceId,
+    required String driverId,
+  }) async {
+    try {
+      _ref.read(emergencyLoadingProvider.notifier).state = true;
+      _ref.read(emergencyErrorProvider.notifier).state = null;
+
+      // Get emergency and ambulance details
+      final emergencyDoc = await FirebaseFirestore.instance
+          .collection('emergencies')
+          .doc(emergencyId)
+          .get();
+
+      final ambulanceDoc = await FirebaseFirestore.instance
+          .collection('ambulances')
+          .doc(ambulanceId)
+          .get();
+
+      if (!emergencyDoc.exists || !ambulanceDoc.exists) {
+        throw Exception('Emergency or ambulance not found');
+      }
+
+      final emergency = EmergencyModel.fromFirestore(emergencyDoc);
+      final ambulance = AmbulanceModel.fromFirestore(ambulanceDoc);
+
+      // Use enhanced assignment with route creation
+      if (ambulance.latitude != null && ambulance.longitude != null) {
+        final distance = _assignmentService.calculateHaversineDistance(
+          lat1: ambulance.latitude!,
+          lon1: ambulance.longitude!,
+          lat2: emergency.patientLat,
+          lon2: emergency.patientLng,
+        );
+
+        final estimatedTime = ((distance / 1000) / 60 * 60).round();
+
+        final success =
+            await _assignmentService.assignAmbulanceToEmergencyWithRoute(
+          emergencyId: emergencyId,
+          ambulanceId: ambulanceId,
+          driverId: driverId,
+          distance: distance,
+          estimatedArrivalTime: estimatedTime,
+        );
+
+        return success;
+      } else {
+        // Fallback to basic assignment
+        final success = await _service.assignAmbulanceToEmergency(
+          emergencyId: emergencyId,
+          ambulanceId: ambulanceId,
+          driverId: driverId,
+        );
+
+        return success;
+      }
+    } catch (e) {
+      _ref.read(emergencyErrorProvider.notifier).state = e.toString();
+      return false;
+    } finally {
+      _ref.read(emergencyLoadingProvider.notifier).state = false;
+    }
+  }
+
+  // New method for auto-assignment
+  Future<bool> autoAssignNearestAmbulance({
+    required String emergencyId,
+    required String hospitalId,
+  }) async {
+    try {
+      _ref.read(emergencyLoadingProvider.notifier).state = true;
+      _ref.read(emergencyErrorProvider.notifier).state = null;
+
+      final success =
+          await _assignmentService.autoAssignNearestAmbulanceWithRoute(
+        emergencyId: emergencyId,
+        hospitalId: hospitalId,
+      );
+
+      return success;
+    } catch (e) {
+      _ref.read(emergencyErrorProvider.notifier).state = e.toString();
+      return false;
+    } finally {
+      _ref.read(emergencyLoadingProvider.notifier).state = false;
+    }
+  }
+
+  Future<AmbulanceModel?> findNearestAmbulance({
+    required String hospitalId,
+    required double patientLat,
+    required double patientLng,
+  }) async {
+    try {
+      return await _service.findNearestAmbulance(
+        hospitalId: hospitalId,
+        patientLat: patientLat,
+        patientLng: patientLng,
+      );
+    } catch (e) {
+      _ref.read(emergencyErrorProvider.notifier).state = e.toString();
+      return null;
+    }
+  }
 }
 
-// Emergency actions provider
+// Emergency actions provider (UPDATED)
 final emergencyActionsProvider = Provider<EmergencyActions>((ref) {
   final service = ref.watch(emergencyServiceProvider);
-  return EmergencyActions(service, ref);
+  final assignmentService = ref.watch(ambulanceAssignmentServiceProvider);
+  return EmergencyActions(service, assignmentService, ref);
 });

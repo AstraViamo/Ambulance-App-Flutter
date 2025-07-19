@@ -24,6 +24,57 @@ class DriverService {
     });
   }
 
+  Stream<List<UserModel>> getAllAvailableDrivers() {
+    return _firestore
+        .collection(_usersCollection)
+        .where('role', isEqualTo: UserRole.ambulanceDriver.value)
+        .where('roleSpecificData.isAvailable', isEqualTo: true)
+        .where('isActive', isEqualTo: true)
+        .snapshots()
+        .asyncMap((snapshot) async {
+      List<UserModel> availableDrivers = [];
+
+      for (var doc in snapshot.docs) {
+        final driver = UserModel.fromFirestore(doc);
+
+        // Check if driver has any assigned ambulances
+        if (driver.roleSpecificData.assignedAmbulances?.isEmpty ?? true) {
+          availableDrivers.add(driver);
+          continue;
+        }
+
+        // Check if any of their assigned ambulances are currently available or offline
+        bool hasAvailableAmbulance = false;
+        for (String ambulanceId
+            in driver.roleSpecificData.assignedAmbulances!) {
+          final ambulanceDoc = await _firestore
+              .collection(_ambulancesCollection)
+              .doc(ambulanceId)
+              .get();
+
+          if (ambulanceDoc.exists) {
+            final ambulanceData = ambulanceDoc.data()!;
+            final ambulanceStatus = ambulanceData['status'] ?? 'offline';
+
+            // Driver is available if they have an ambulance that's available or offline
+            if (ambulanceStatus == 'available' ||
+                ambulanceStatus == 'offline') {
+              hasAvailableAmbulance = true;
+              break;
+            }
+          }
+        }
+
+        // If driver has no available ambulances, they can be assigned to a new one
+        if (!hasAvailableAmbulance) {
+          availableDrivers.add(driver);
+        }
+      }
+
+      return availableDrivers;
+    });
+  }
+
   // Get available drivers (on shift and not assigned to active ambulances)
   Stream<List<UserModel>> getAvailableDrivers(String hospitalId) {
     return _firestore

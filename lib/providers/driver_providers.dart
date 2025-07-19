@@ -9,6 +9,13 @@ final driverServiceProvider = Provider<DriverService>((ref) {
   return DriverService();
 });
 
+final allAvailableDriversProvider = StreamProvider<List<UserModel>>(
+  (ref) {
+    final driverService = ref.watch(driverServiceProvider);
+    return driverService.getAllAvailableDrivers();
+  },
+);
+
 // Available drivers provider for hospital
 final availableDriversProvider = StreamProvider.family<List<UserModel>, String>(
   (ref, hospitalId) {

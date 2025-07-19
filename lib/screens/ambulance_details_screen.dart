@@ -514,8 +514,7 @@ class _AssignDriverDialogState extends ConsumerState<_AssignDriverDialog> {
 
   @override
   Widget build(BuildContext context) {
-    final availableDriversAsync =
-        ref.watch(availableDriversProvider(widget.ambulance.hospitalId));
+    final availableDriversAsync = ref.watch(allAvailableDriversProvider);
     final isLoading = ref.watch(driverLoadingProvider);
     final error = ref.watch(driverErrorProvider);
 
@@ -619,7 +618,7 @@ class _AssignDriverDialogState extends ConsumerState<_AssignDriverDialog> {
                         ),
                       );
                     }).toList(),
-                    onChanged: (driver) {
+                    onChanged: (UserModel? driver) {
                       setState(() {
                         selectedDriver = driver;
                       });

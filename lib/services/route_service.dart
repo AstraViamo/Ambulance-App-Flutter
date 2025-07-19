@@ -68,33 +68,328 @@ class RouteService {
         startLng: ambulanceLng,
         endLat: patientLat,
         endLng: patientLng,
-        startAddress:
-            'Ambulance Location', // Could be enhanced with reverse geocoding
-        endAddress: emergency.patientAddressString,
+        startAddress: 'Ambulance Location',
+        endAddress: emergency.location,
         emergencyPriority: emergency.priority.value,
-        patientLocation: emergency.patientAddressString,
+        patientLocation: emergency.location,
         createdAt: DateTime.now(),
         updatedAt: DateTime.now(),
-        estimatedArrival:
-            DateTime.now().add(Duration(seconds: directionsData['duration'])),
+        estimatedArrival: DateTime.now().add(
+          Duration(seconds: directionsData['duration']),
+        ),
       );
 
       // Save route to Firestore
-      final routeRef =
+      final docRef =
           await _firestore.collection('routes').add(route.toFirestore());
-      final savedRoute = route.copyWith();
+      final savedRoute = route.copyWith(id: docRef.id);
 
-      log('Route calculated and saved with ID: ${routeRef.id}');
+      // Send notifications to police
+      await _notificationService.sendRouteNotificationToPolice(
+        route: savedRoute,
+        type: 'new_route',
+      );
 
-      // Notify police if high priority
-      if (route.isHighPriority) {
-        await _notifyPoliceOfNewRoute(savedRoute);
-      }
-
+      log('Route created successfully: ${docRef.id}');
       return savedRoute;
     } catch (e) {
-      log('Error calculating ambulance route: $e');
-      throw Exception('Failed to calculate route: $e');
+      log('Error calculating route: $e');
+      return null;
+    }
+  }
+
+  // HOSPITAL DASHBOARD QUERIES
+
+  /// Get all routes for hospital dashboard (regardless of status)
+  /// Hospital should see all routes with their status
+  Stream<List<AmbulanceRouteModel>> getHospitalRoutes(String hospitalId) {
+    return _firestore
+        .collection('routes')
+        .orderBy('createdAt', descending: true)
+        .snapshots()
+        .map((snapshot) => snapshot.docs
+            .map((doc) => AmbulanceRouteModel.fromFirestore(doc))
+            .toList());
+  }
+
+  /// Get active routes for hospital (not completed yet)
+  /// Active routes = active + cleared statuses
+  Stream<List<AmbulanceRouteModel>> getHospitalActiveRoutes(String hospitalId) {
+    return _firestore
+        .collection('routes')
+        .where('status', whereIn: ['active', 'cleared'])
+        .orderBy('createdAt', descending: true)
+        .snapshots()
+        .map((snapshot) => snapshot.docs
+            .map((doc) => AmbulanceRouteModel.fromFirestore(doc))
+            .toList());
+  }
+
+  /// Get completed routes for hospital route history
+  Stream<List<AmbulanceRouteModel>> getHospitalRouteHistory(String hospitalId) {
+    return _firestore
+        .collection('routes')
+        .where('status', isEqualTo: 'completed')
+        .orderBy('completedAt', descending: true)
+        .snapshots()
+        .map((snapshot) => snapshot.docs
+            .map((doc) => AmbulanceRouteModel.fromFirestore(doc))
+            .toList());
+  }
+
+  // POLICE DASHBOARD QUERIES
+
+  /// Get pending routes for police (routes needing clearance)
+  /// Pending routes = active status only
+  Stream<List<AmbulanceRouteModel>> getPolicePendingRoutes() {
+    return _firestore
+        .collection('routes')
+        .where('status', isEqualTo: 'active')
+        .orderBy('createdAt', descending: true)
+        .snapshots()
+        .map((snapshot) => snapshot.docs
+            .map((doc) => AmbulanceRouteModel.fromFirestore(doc))
+            .toList());
+  }
+
+  /// Get active routes for police (cleared but not completed)
+  /// Active routes = cleared status only
+  Stream<List<AmbulanceRouteModel>> getPoliceActiveRoutes() {
+    return _firestore
+        .collection('routes')
+        .where('status', isEqualTo: 'cleared')
+        .orderBy('clearedAt', descending: true)
+        .snapshots()
+        .map((snapshot) => snapshot.docs
+            .map((doc) => AmbulanceRouteModel.fromFirestore(doc))
+            .toList());
+  }
+
+  /// Get route history for police (completed routes)
+  Stream<List<AmbulanceRouteModel>> getPoliceRouteHistory() {
+    return _firestore
+        .collection('routes')
+        .where('status', isEqualTo: 'completed')
+        .orderBy('completedAt', descending: true)
+        .snapshots()
+        .map((snapshot) => snapshot.docs
+            .map((doc) => AmbulanceRouteModel.fromFirestore(doc))
+            .toList());
+  }
+
+  /// Get all routes for police dashboard (active + cleared)
+  /// This replaces the old getAllActiveRoutes method
+  Stream<List<AmbulanceRouteModel>> getPoliceAllRoutes() {
+    return _firestore
+        .collection('routes')
+        .where('status', whereIn: ['active', 'cleared'])
+        .orderBy('createdAt', descending: true)
+        .snapshots()
+        .map((snapshot) => snapshot.docs
+            .map((doc) => AmbulanceRouteModel.fromFirestore(doc))
+            .toList());
+  }
+
+  // LEGACY METHODS (for backwards compatibility)
+
+  /// Get active routes for hospital (legacy method)
+  /// Updated to return all non-completed routes
+  Stream<List<AmbulanceRouteModel>> getActiveRoutes(String hospitalId) {
+    return getHospitalActiveRoutes(hospitalId);
+  }
+
+  /// Get all active routes (legacy method for police)
+  /// Updated to return active + cleared routes
+  Stream<List<AmbulanceRouteModel>> getAllActiveRoutes() {
+    return getPoliceAllRoutes();
+  }
+
+  // ROUTE STATUS MANAGEMENT
+
+  /// Update route status with enhanced validation and tracking
+  Future<void> updateRouteStatus({
+    required String routeId,
+    required RouteStatus newStatus,
+    required String policeOfficerId,
+    required String policeOfficerName,
+    String? notes,
+    String? completionReason,
+  }) async {
+    try {
+      log('Updating route $routeId status to ${newStatus.value}');
+
+      // Get current route to validate transition
+      final routeDoc = await _firestore.collection('routes').doc(routeId).get();
+      if (!routeDoc.exists) {
+        throw Exception('Route not found');
+      }
+
+      final currentRoute = AmbulanceRouteModel.fromFirestore(routeDoc);
+
+      // Validate status transition
+      if (!currentRoute.canTransitionTo(newStatus)) {
+        throw Exception(
+            'Invalid status transition from ${currentRoute.status.value} to ${newStatus.value}');
+      }
+
+      final updateData = <String, dynamic>{
+        'status': newStatus.value,
+        'updatedAt': FieldValue.serverTimestamp(),
+        'policeOfficerId': policeOfficerId,
+        'policeOfficerName': policeOfficerName,
+        'statusUpdatedAt': FieldValue.serverTimestamp(),
+        'statusNotes': notes,
+      };
+
+      // Add specific timestamp fields based on status
+      switch (newStatus) {
+        case RouteStatus.cleared:
+          updateData['clearedAt'] = FieldValue.serverTimestamp();
+          break;
+        case RouteStatus.completed:
+          updateData['completedAt'] = FieldValue.serverTimestamp();
+          if (completionReason != null) {
+            updateData['completionReason'] = completionReason;
+          }
+          break;
+        default:
+          break;
+      }
+
+      await _firestore.collection('routes').doc(routeId).update(updateData);
+
+      // Send appropriate notifications
+      final updatedRoute = currentRoute.copyWith(
+        status: newStatus,
+        policeOfficerId: policeOfficerId,
+        policeOfficerName: policeOfficerName,
+        statusNotes: notes,
+      );
+
+      await _sendStatusUpdateNotifications(updatedRoute, newStatus);
+
+      log('Route status updated successfully');
+    } catch (e) {
+      log('Error updating route status: $e');
+      throw Exception('Failed to update route status: $e');
+    }
+  }
+
+  /// Complete route (usually called by driver/hospital)
+  Future<void> completeRoute({
+    required String routeId,
+    required String completedBy,
+    required String completedByName,
+    String? completionReason,
+    String? notes,
+  }) async {
+    await updateRouteStatus(
+      routeId: routeId,
+      newStatus: RouteStatus.completed,
+      policeOfficerId: completedBy,
+      policeOfficerName: completedByName,
+      notes: notes,
+      completionReason: completionReason ?? 'Arrived at destination',
+    );
+  }
+
+  // UTILITY METHODS
+
+  /// Get route by ID
+  Future<AmbulanceRouteModel?> getRoute(String routeId) async {
+    try {
+      final doc = await _firestore.collection('routes').doc(routeId).get();
+      if (doc.exists) {
+        return AmbulanceRouteModel.fromFirestore(doc);
+      }
+      return null;
+    } catch (e) {
+      log('Error getting route: $e');
+      return null;
+    }
+  }
+
+  /// Get route for specific emergency
+  Future<AmbulanceRouteModel?> getRouteForEmergency(String emergencyId) async {
+    try {
+      final querySnapshot = await _firestore
+          .collection('routes')
+          .where('emergencyId', isEqualTo: emergencyId)
+          .limit(1)
+          .get();
+
+      if (querySnapshot.docs.isNotEmpty) {
+        return AmbulanceRouteModel.fromFirestore(querySnapshot.docs.first);
+      }
+      return null;
+    } catch (e) {
+      log('Error getting route for emergency: $e');
+      return null;
+    }
+  }
+
+  /// Get routes by status
+  Stream<List<AmbulanceRouteModel>> getRoutesByStatus(RouteStatus status) {
+    return _firestore
+        .collection('routes')
+        .where('status', isEqualTo: status.value)
+        .orderBy('createdAt', descending: true)
+        .snapshots()
+        .map((snapshot) => snapshot.docs
+            .map((doc) => AmbulanceRouteModel.fromFirestore(doc))
+            .toList());
+  }
+
+  /// Get routes by multiple statuses
+  Stream<List<AmbulanceRouteModel>> getRoutesByStatuses(
+      List<RouteStatus> statuses) {
+    final statusValues = statuses.map((s) => s.value).toList();
+    return _firestore
+        .collection('routes')
+        .where('status', whereIn: statusValues)
+        .orderBy('createdAt', descending: true)
+        .snapshots()
+        .map((snapshot) => snapshot.docs
+            .map((doc) => AmbulanceRouteModel.fromFirestore(doc))
+            .toList());
+  }
+
+  // PRIVATE HELPER METHODS
+
+  /// Send notifications based on status update
+  Future<void> _sendStatusUpdateNotifications(
+    AmbulanceRouteModel route,
+    RouteStatus newStatus,
+  ) async {
+    try {
+      switch (newStatus) {
+        case RouteStatus.cleared:
+          await _notificationService.sendRouteNotificationToHospital(
+            route: route,
+            type: 'route_cleared',
+            hospitalId: route.ambulanceId, // Assuming hospital can be derived
+          );
+          break;
+        case RouteStatus.completed:
+          await _notificationService.sendRouteNotificationToHospital(
+            route: route,
+            type: 'route_completed',
+            hospitalId: route.ambulanceId,
+          );
+          break;
+        case RouteStatus.timeout:
+          await _notificationService.sendRouteNotificationToHospital(
+            route: route,
+            type: 'route_timeout',
+            hospitalId: route.ambulanceId,
+          );
+          break;
+        default:
+          break;
+      }
+    } catch (e) {
+      log('Error sending status update notifications: $e');
+      // Don't throw - notifications failing shouldn't fail the status update
     }
   }
 
@@ -106,15 +401,15 @@ class RouteService {
     required double destLng,
   }) async {
     try {
-      final url = Uri.parse('$_directionsBaseUrl?'
+      final url = '$_directionsBaseUrl?'
           'origin=$originLat,$originLng&'
           'destination=$destLat,$destLng&'
+          'key=$_directionsApiKey&'
           'mode=driving&'
           'traffic_model=best_guess&'
-          'departure_time=now&'
-          'key=$_directionsApiKey');
+          'departure_time=now';
 
-      final response = await http.get(url);
+      final response = await http.get(Uri.parse(url));
 
       if (response.statusCode == 200) {
         final data = json.decode(response.body);
@@ -122,23 +417,17 @@ class RouteService {
         if (data['status'] == 'OK' && data['routes'].isNotEmpty) {
           final route = data['routes'][0];
           final leg = route['legs'][0];
-
-          // Extract polyline
           final polyline = route['overview_polyline']['points'];
 
-          // Extract steps
           final steps = (leg['steps'] as List).map((step) {
-            final startLocation = step['start_location'];
-            final endLocation = step['end_location'];
-
             return RouteStep(
-              instruction: _stripHtmlTags(step['html_instructions']),
+              instruction: _stripHtmlTags(step['html_instructions'] ?? ''),
               distanceMeters: step['distance']['value'].toDouble(),
               durationSeconds: step['duration']['value'],
-              startLat: startLocation['lat'].toDouble(),
-              startLng: startLocation['lng'].toDouble(),
-              endLat: endLocation['lat'].toDouble(),
-              endLng: endLocation['lng'].toDouble(),
+              startLat: step['start_location']['lat'].toDouble(),
+              startLng: step['start_location']['lng'].toDouble(),
+              endLat: step['end_location']['lat'].toDouble(),
+              endLng: step['end_location']['lng'].toDouble(),
               maneuver: step['maneuver'] ?? '',
             );
           }).toList();
@@ -167,268 +456,5 @@ class RouteService {
   String _stripHtmlTags(String htmlString) {
     RegExp exp = RegExp(r"<[^>]*>", multiLine: true, caseSensitive: true);
     return htmlString.replaceAll(exp, '');
-  }
-
-  /// Get active routes for hospital
-  Stream<List<AmbulanceRouteModel>> getActiveRoutes(String hospitalId) {
-    return _firestore
-        .collection('routes')
-        .where('status', isEqualTo: 'active')
-        .orderBy('createdAt', descending: true)
-        .snapshots()
-        .map((snapshot) => snapshot.docs
-            .map((doc) => AmbulanceRouteModel.fromFirestore(doc))
-            .toList());
-  }
-
-  /// Get all routes (for police dashboard)
-  Stream<List<AmbulanceRouteModel>> getAllActiveRoutes() {
-    return _firestore
-        .collection('routes')
-        .where('status', whereIn: ['active', 'cleared'])
-        .orderBy('createdAt', descending: true)
-        .snapshots()
-        .map((snapshot) => snapshot.docs
-            .map((doc) => AmbulanceRouteModel.fromFirestore(doc))
-            .toList());
-  }
-
-  /// Update route status (used by police)
-  Future<void> updateRouteStatus({
-    required String routeId,
-    required RouteStatus newStatus,
-    required String policeOfficerId,
-    required String policeOfficerName,
-    String? notes,
-  }) async {
-    try {
-      final batch = _firestore.batch();
-
-      // Update route document
-      final routeRef = _firestore.collection('routes').doc(routeId);
-      batch.update(routeRef, {
-        'status': newStatus.value,
-        'policeOfficerId': policeOfficerId,
-        'policeOfficerName': policeOfficerName,
-        'statusUpdatedAt': FieldValue.serverTimestamp(),
-        'updatedAt': FieldValue.serverTimestamp(),
-        if (notes != null) 'statusNotes': notes,
-      });
-
-      await batch.commit();
-
-      // Get route details for notification
-      final routeDoc = await routeRef.get();
-      if (routeDoc.exists) {
-        final route = AmbulanceRouteModel.fromFirestore(routeDoc);
-        await _notifyHospitalOfRouteUpdate(route, newStatus, policeOfficerName);
-      }
-
-      log('Route $routeId status updated to ${newStatus.value}');
-    } catch (e) {
-      log('Error updating route status: $e');
-      throw Exception('Failed to update route status: $e');
-    }
-  }
-
-  /// Complete route when ambulance arrives
-  Future<void> completeRoute(String routeId) async {
-    try {
-      await _firestore.collection('routes').doc(routeId).update({
-        'status': RouteStatus.completed.value,
-        'updatedAt': FieldValue.serverTimestamp(),
-      });
-
-      log('Route $routeId completed');
-    } catch (e) {
-      log('Error completing route: $e');
-      throw Exception('Failed to complete route: $e');
-    }
-  }
-
-  /// Notify police of new high-priority route
-  Future<void> _notifyPoliceOfNewRoute(AmbulanceRouteModel route) async {
-    try {
-      // Get all police officers
-      final policeQuery = await _firestore
-          .collection('users')
-          .where('role', isEqualTo: 'police')
-          .where('isActive', isEqualTo: true)
-          .get();
-
-      final batch = _firestore.batch();
-
-      for (final doc in policeQuery.docs) {
-        final userId = doc.id;
-
-        // Create notification for each police officer
-        final notificationRef = _firestore.collection('notifications').doc();
-        batch.set(notificationRef, {
-          'type': 'new_route',
-          'title':
-              '🚨 New ${route.emergencyPriority.toUpperCase()} Emergency Route',
-          'message':
-              'Ambulance ${route.ambulanceLicensePlate} dispatched to ${route.patientLocation}. ETA: ${route.formattedETA}',
-          'recipientId': userId,
-          'routeId': route.id,
-          'ambulanceId': route.ambulanceId,
-          'emergencyId': route.emergencyId,
-          'priority': route.emergencyPriority,
-          'isRead': false,
-          'createdAt': FieldValue.serverTimestamp(),
-          'data': {
-            'routeId': route.id,
-            'ambulanceLicensePlate': route.ambulanceLicensePlate,
-            'eta': route.etaMinutes,
-            'emergencyPriority': route.emergencyPriority,
-            'patientLocation': route.patientLocation,
-          },
-        });
-
-        // Send push notification
-        await _notificationService.sendPushNotification(
-          userId: userId,
-          title:
-              '🚨 New ${route.emergencyPriority.toUpperCase()} Emergency Route',
-          message:
-              'Ambulance ${route.ambulanceLicensePlate} dispatched. ETA: ${route.formattedETA}',
-          data: {
-            'type': 'new_route',
-            'routeId': route.id,
-            'ambulanceId': route.ambulanceId,
-            'emergencyId': route.emergencyId,
-          },
-        );
-      }
-
-      await batch.commit();
-      log('Police notified of new route: ${route.id}');
-    } catch (e) {
-      log('Error notifying police of new route: $e');
-    }
-  }
-
-  /// Notify hospital of route status update
-  Future<void> _notifyHospitalOfRouteUpdate(
-    AmbulanceRouteModel route,
-    RouteStatus newStatus,
-    String policeOfficerName,
-  ) async {
-    try {
-      // Get emergency details to find hospital
-      final emergencyDoc = await _firestore
-          .collection('emergencies')
-          .doc(route.emergencyId)
-          .get();
-
-      if (!emergencyDoc.exists) return;
-
-      final emergency = EmergencyModel.fromFirestore(emergencyDoc);
-
-      // Get hospital admin users
-      final hospitalQuery = await _firestore
-          .collection('users')
-          .where('role', isEqualTo: 'hospital_admin')
-          .where('roleSpecificData.hospitalId', isEqualTo: emergency.hospitalId)
-          .where('isActive', isEqualTo: true)
-          .get();
-
-      final batch = _firestore.batch();
-
-      String notificationMessage;
-      switch (newStatus) {
-        case RouteStatus.cleared:
-          notificationMessage =
-              '✅ Route for Ambulance ${route.ambulanceLicensePlate} has been cleared by Officer $policeOfficerName';
-          break;
-        case RouteStatus.timeout:
-          notificationMessage =
-              '⏰ Route for Ambulance ${route.ambulanceLicensePlate} marked as timeout by Officer $policeOfficerName';
-          break;
-        default:
-          notificationMessage =
-              'Route for Ambulance ${route.ambulanceLicensePlate} updated by Officer $policeOfficerName';
-      }
-
-      for (final doc in hospitalQuery.docs) {
-        final userId = doc.id;
-
-        // Create notification
-        final notificationRef = _firestore.collection('notifications').doc();
-        batch.set(notificationRef, {
-          'type': 'route_update',
-          'title': 'Route Status Update',
-          'message': notificationMessage,
-          'recipientId': userId,
-          'routeId': route.id,
-          'ambulanceId': route.ambulanceId,
-          'emergencyId': route.emergencyId,
-          'policeOfficerId': route.policeOfficerId,
-          'policeOfficerName': policeOfficerName,
-          'newStatus': newStatus.value,
-          'isRead': false,
-          'createdAt': FieldValue.serverTimestamp(),
-          'data': {
-            'routeId': route.id,
-            'ambulanceLicensePlate': route.ambulanceLicensePlate,
-            'newStatus': newStatus.value,
-            'policeOfficerName': policeOfficerName,
-          },
-        });
-
-        // Send push notification
-        await _notificationService.sendPushNotification(
-          userId: userId,
-          title: 'Route Status Update',
-          message: notificationMessage,
-          data: {
-            'type': 'route_update',
-            'routeId': route.id,
-            'ambulanceId': route.ambulanceId,
-            'emergencyId': route.emergencyId,
-            'newStatus': newStatus.value,
-          },
-        );
-      }
-
-      await batch.commit();
-      log('Hospital notified of route update: ${route.id}');
-    } catch (e) {
-      log('Error notifying hospital of route update: $e');
-    }
-  }
-
-  /// Get route by ID
-  Future<AmbulanceRouteModel?> getRoute(String routeId) async {
-    try {
-      final doc = await _firestore.collection('routes').doc(routeId).get();
-      if (doc.exists) {
-        return AmbulanceRouteModel.fromFirestore(doc);
-      }
-      return null;
-    } catch (e) {
-      log('Error getting route: $e');
-      return null;
-    }
-  }
-
-  /// Get route for emergency
-  Future<AmbulanceRouteModel?> getRouteForEmergency(String emergencyId) async {
-    try {
-      final query = await _firestore
-          .collection('routes')
-          .where('emergencyId', isEqualTo: emergencyId)
-          .where('status', whereIn: ['active', 'cleared'])
-          .limit(1)
-          .get();
-
-      if (query.docs.isNotEmpty) {
-        return AmbulanceRouteModel.fromFirestore(query.docs.first);
-      }
-      return null;
-    } catch (e) {
-      log('Error getting route for emergency: $e');
-      return null;
-    }
   }
 }

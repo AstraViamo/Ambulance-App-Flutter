@@ -42,6 +42,63 @@ enum RouteStatus {
         return 0xFF9E9E9E; // Grey
     }
   }
+
+  /// Check if this status can transition to the new status
+  bool canTransitionTo(RouteStatus newStatus) {
+    switch (this) {
+      case RouteStatus.active:
+        return newStatus == RouteStatus.cleared ||
+            newStatus == RouteStatus.timeout ||
+            newStatus == RouteStatus.completed;
+      case RouteStatus.cleared:
+        return newStatus == RouteStatus.completed ||
+            newStatus == RouteStatus.timeout;
+      case RouteStatus.timeout:
+        return newStatus == RouteStatus.active ||
+            newStatus == RouteStatus.completed;
+      case RouteStatus.completed:
+        return false; // Terminal status
+    }
+  }
+
+  /// Get valid next statuses from current status
+  List<RouteStatus> get validNextStatuses {
+    switch (this) {
+      case RouteStatus.active:
+        return [
+          RouteStatus.cleared,
+          RouteStatus.timeout,
+          RouteStatus.completed
+        ];
+      case RouteStatus.cleared:
+        return [RouteStatus.completed, RouteStatus.timeout];
+      case RouteStatus.timeout:
+        return [RouteStatus.active, RouteStatus.completed];
+      case RouteStatus.completed:
+        return []; // Terminal status
+    }
+  }
+
+  /// Check if route is considered "active" for hospital dashboard
+  /// (active routes are those not yet completed)
+  bool get isActiveForHospital {
+    return this == RouteStatus.active || this == RouteStatus.cleared;
+  }
+
+  /// Check if route is pending for police (needs clearance)
+  bool get isPendingForPolice {
+    return this == RouteStatus.active;
+  }
+
+  /// Check if route is active for police (cleared but not completed)
+  bool get isActiveForPolice {
+    return this == RouteStatus.cleared;
+  }
+
+  /// Check if route is completed
+  bool get isCompleted {
+    return this == RouteStatus.completed;
+  }
 }
 
 class AmbulanceRouteModel {
@@ -74,6 +131,11 @@ class AmbulanceRouteModel {
   final DateTime? statusUpdatedAt;
   final String? statusNotes;
 
+  // Additional tracking fields for better status management
+  final DateTime? clearedAt;
+  final DateTime? completedAt;
+  final String? completionReason;
+
   AmbulanceRouteModel({
     required this.id,
     required this.ambulanceId,
@@ -101,6 +163,9 @@ class AmbulanceRouteModel {
     this.policeOfficerName,
     this.statusUpdatedAt,
     this.statusNotes,
+    this.clearedAt,
+    this.completedAt,
+    this.completionReason,
   });
 
   factory AmbulanceRouteModel.fromFirestore(DocumentSnapshot doc) {
@@ -136,6 +201,9 @@ class AmbulanceRouteModel {
       policeOfficerName: data['policeOfficerName'],
       statusUpdatedAt: (data['statusUpdatedAt'] as Timestamp?)?.toDate(),
       statusNotes: data['statusNotes'],
+      clearedAt: (data['clearedAt'] as Timestamp?)?.toDate(),
+      completedAt: (data['completedAt'] as Timestamp?)?.toDate(),
+      completionReason: data['completionReason'],
     );
   }
 
@@ -161,89 +229,180 @@ class AmbulanceRouteModel {
       'patientLocation': patientLocation,
       'createdAt': Timestamp.fromDate(createdAt),
       'updatedAt': Timestamp.fromDate(updatedAt),
-      if (estimatedArrival != null)
-        'estimatedArrival': Timestamp.fromDate(estimatedArrival!),
-      if (policeOfficerId != null) 'policeOfficerId': policeOfficerId,
-      if (policeOfficerName != null) 'policeOfficerName': policeOfficerName,
-      if (statusUpdatedAt != null)
-        'statusUpdatedAt': Timestamp.fromDate(statusUpdatedAt!),
-      if (statusNotes != null) 'statusNotes': statusNotes,
+      'estimatedArrival': estimatedArrival != null
+          ? Timestamp.fromDate(estimatedArrival!)
+          : null,
+      'policeOfficerId': policeOfficerId,
+      'policeOfficerName': policeOfficerName,
+      'statusUpdatedAt':
+          statusUpdatedAt != null ? Timestamp.fromDate(statusUpdatedAt!) : null,
+      'statusNotes': statusNotes,
+      'clearedAt': clearedAt != null ? Timestamp.fromDate(clearedAt!) : null,
+      'completedAt':
+          completedAt != null ? Timestamp.fromDate(completedAt!) : null,
+      'completionReason': completionReason,
     };
   }
 
+  // Helper getters for UI display
+  bool get isHighPriority =>
+      emergencyPriority == 'critical' || emergencyPriority == 'high';
+
   String get formattedDistance {
     if (distanceMeters < 1000) {
-      return '${distanceMeters.round()}m';
+      return '${distanceMeters.toInt()}m';
     } else {
       return '${(distanceMeters / 1000).toStringAsFixed(1)}km';
     }
   }
 
   String get formattedDuration {
-    final hours = durationSeconds ~/ 3600;
-    final minutes = (durationSeconds % 3600) ~/ 60;
-
-    if (hours > 0) {
-      return '${hours}h ${minutes}m';
+    final minutes = (durationSeconds / 60).round();
+    if (minutes < 60) {
+      return '${minutes}min';
     } else {
-      return '${minutes}m';
+      final hours = minutes ~/ 60;
+      final remainingMinutes = minutes % 60;
+      return '${hours}h ${remainingMinutes}min';
     }
   }
 
   String get formattedETA {
-    if (estimatedArrival == null) return 'Unknown';
+    return '${etaMinutes}min';
+  }
 
-    final now = DateTime.now();
-    final timeToArrival = estimatedArrival!.difference(now);
-
-    if (timeToArrival.isNegative) {
-      return 'Overdue by ${(-timeToArrival.inMinutes)}m';
-    } else if (timeToArrival.inMinutes < 60) {
-      return '${timeToArrival.inMinutes}m';
-    } else {
-      return '${timeToArrival.inHours}h ${timeToArrival.inMinutes % 60}m';
+  /// Get status description based on role perspective
+  String getStatusDescription(String userRole) {
+    switch (userRole) {
+      case 'police':
+        switch (status) {
+          case RouteStatus.active:
+            return 'Pending Clearance';
+          case RouteStatus.cleared:
+            return 'Traffic Cleared';
+          case RouteStatus.timeout:
+            return 'Clearance Timeout';
+          case RouteStatus.completed:
+            return 'Route Completed';
+        }
+      case 'hospital_admin':
+      case 'hospital_staff':
+        switch (status) {
+          case RouteStatus.active:
+            return 'En Route (Traffic)';
+          case RouteStatus.cleared:
+            return 'En Route (Clear)';
+          case RouteStatus.timeout:
+            return 'Delayed';
+          case RouteStatus.completed:
+            return 'Arrived';
+        }
+      default:
+        return status.displayName;
     }
   }
 
-  bool get isHighPriority {
-    return emergencyPriority == 'critical' || emergencyPriority == 'high';
+  /// Validate status transition
+  bool canTransitionTo(RouteStatus newStatus) {
+    return status.canTransitionTo(newStatus);
+  }
+
+  /// Get route history summary for display
+  Map<String, dynamic> get historyInfo {
+    return {
+      'emergency': {
+        'id': emergencyId,
+        'priority': emergencyPriority,
+        'location': patientLocation,
+      },
+      'driver': {
+        'id': driverId,
+        'ambulance': ambulanceLicensePlate,
+      },
+      'police': policeOfficerId != null
+          ? {
+              'officerId': policeOfficerId,
+              'officerName': policeOfficerName,
+              'clearedAt': clearedAt,
+              'notes': statusNotes,
+            }
+          : null,
+      'timeline': {
+        'created': createdAt,
+        'cleared': clearedAt,
+        'completed': completedAt,
+      },
+      'completion': {
+        'reason': completionReason,
+        'duration': completedAt != null
+            ? completedAt!.difference(createdAt).inMinutes
+            : null,
+      }
+    };
   }
 
   AmbulanceRouteModel copyWith({
+    String? id,
+    String? ambulanceId,
+    String? emergencyId,
+    String? driverId,
+    String? ambulanceLicensePlate,
     RouteStatus? status,
+    String? encodedPolyline,
+    List<RouteStep>? steps,
+    double? distanceMeters,
+    int? durationSeconds,
+    int? etaMinutes,
+    double? startLat,
+    double? startLng,
+    double? endLat,
+    double? endLng,
+    String? startAddress,
+    String? endAddress,
+    String? emergencyPriority,
+    String? patientLocation,
+    DateTime? createdAt,
+    DateTime? updatedAt,
+    DateTime? estimatedArrival,
     String? policeOfficerId,
     String? policeOfficerName,
     DateTime? statusUpdatedAt,
     String? statusNotes,
-    DateTime? updatedAt,
+    DateTime? clearedAt,
+    DateTime? completedAt,
+    String? completionReason,
   }) {
     return AmbulanceRouteModel(
-      id: id,
-      ambulanceId: ambulanceId,
-      emergencyId: emergencyId,
-      driverId: driverId,
-      ambulanceLicensePlate: ambulanceLicensePlate,
+      id: id ?? this.id,
+      ambulanceId: ambulanceId ?? this.ambulanceId,
+      emergencyId: emergencyId ?? this.emergencyId,
+      driverId: driverId ?? this.driverId,
+      ambulanceLicensePlate:
+          ambulanceLicensePlate ?? this.ambulanceLicensePlate,
       status: status ?? this.status,
-      encodedPolyline: encodedPolyline,
-      steps: steps,
-      distanceMeters: distanceMeters,
-      durationSeconds: durationSeconds,
-      etaMinutes: etaMinutes,
-      startLat: startLat,
-      startLng: startLng,
-      endLat: endLat,
-      endLng: endLng,
-      startAddress: startAddress,
-      endAddress: endAddress,
-      emergencyPriority: emergencyPriority,
-      patientLocation: patientLocation,
-      createdAt: createdAt,
+      encodedPolyline: encodedPolyline ?? this.encodedPolyline,
+      steps: steps ?? this.steps,
+      distanceMeters: distanceMeters ?? this.distanceMeters,
+      durationSeconds: durationSeconds ?? this.durationSeconds,
+      etaMinutes: etaMinutes ?? this.etaMinutes,
+      startLat: startLat ?? this.startLat,
+      startLng: startLng ?? this.startLng,
+      endLat: endLat ?? this.endLat,
+      endLng: endLng ?? this.endLng,
+      startAddress: startAddress ?? this.startAddress,
+      endAddress: endAddress ?? this.endAddress,
+      emergencyPriority: emergencyPriority ?? this.emergencyPriority,
+      patientLocation: patientLocation ?? this.patientLocation,
+      createdAt: createdAt ?? this.createdAt,
       updatedAt: updatedAt ?? DateTime.now(),
-      estimatedArrival: estimatedArrival,
+      estimatedArrival: estimatedArrival ?? this.estimatedArrival,
       policeOfficerId: policeOfficerId ?? this.policeOfficerId,
       policeOfficerName: policeOfficerName ?? this.policeOfficerName,
       statusUpdatedAt: statusUpdatedAt ?? this.statusUpdatedAt,
       statusNotes: statusNotes ?? this.statusNotes,
+      clearedAt: clearedAt ?? this.clearedAt,
+      completedAt: completedAt ?? this.completedAt,
+      completionReason: completionReason ?? this.completionReason,
     );
   }
 }

@@ -1,4 +1,4 @@
-// lib/services/enhanced_notification_service.dart
+// lib/services/notification_service.dart
 import 'dart:convert';
 import 'dart:developer';
 import 'dart:typed_data';
@@ -8,6 +8,7 @@ import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 
+import '../models/emergency_model.dart';
 import '../models/route_model.dart';
 
 class NotificationService {
@@ -58,6 +59,523 @@ class NotificationService {
     }
   }
 
+  // =============================================================================
+  // POLICE NOTIFICATIONS
+  // =============================================================================
+
+  /// Send new route notification to police officers
+  Future<bool> sendRouteNotificationToPolice({
+    required AmbulanceRouteModel route,
+    required String type,
+  }) async {
+    try {
+      String title;
+      String message;
+      String emoji;
+      String priority;
+
+      switch (type) {
+        case 'new_route':
+          emoji = '🚨';
+          title = 'New Emergency Route';
+          message =
+              'Ambulance ${route.ambulanceLicensePlate} dispatched to ${route.patientLocation}. '
+              'Priority: ${route.emergencyPriority.toUpperCase()}. ETA: ${route.formattedETA}';
+          priority = route.isHighPriority ? 'critical' : 'high';
+          break;
+        case 'route_updated':
+          emoji = '📍';
+          title = 'Route Updated';
+          message =
+              'Route for Ambulance ${route.ambulanceLicensePlate} has been updated';
+          priority = 'normal';
+          break;
+        case 'route_reactivated':
+          emoji = '🔄';
+          title = 'Route Reactivated';
+          message =
+              'Route for Ambulance ${route.ambulanceLicensePlate} has been reactivated and needs attention';
+          priority = 'high';
+          break;
+        default:
+          emoji = '📱';
+          title = 'Route Notification';
+          message =
+              'Route notification for Ambulance ${route.ambulanceLicensePlate}';
+          priority = 'normal';
+      }
+
+      // Get all active police officers
+      final policeQuery = await _firestore
+          .collection('users')
+          .where('role', isEqualTo: 'police')
+          .where('isActive', isEqualTo: true)
+          .get();
+
+      int notificationsSent = 0;
+
+      for (final doc in policeQuery.docs) {
+        final userId = doc.id;
+
+        // Create in-app notification
+        await _createInAppNotification(
+          recipientId: userId,
+          type: type,
+          title: '$emoji $title',
+          message: message,
+          data: {
+            'routeId': route.id,
+            'ambulanceId': route.ambulanceId,
+            'emergencyId': route.emergencyId,
+            'ambulanceLicensePlate': route.ambulanceLicensePlate,
+            'eta': route.etaMinutes,
+            'emergencyPriority': route.emergencyPriority,
+            'patientLocation': route.patientLocation,
+            'distance': route.formattedDistance,
+            'duration': route.formattedDuration,
+            'status': route.status.value,
+            'policeOfficerId': route.policeOfficerId,
+            'policeOfficerName': route.policeOfficerName,
+          },
+          priority: priority,
+        );
+
+        // Send push notification for critical/high priority routes
+        if (priority == 'critical' || priority == 'high') {
+          await _queuePushNotification(
+            recipientId: userId,
+            title: title,
+            message: message,
+            data: {
+              'type': type,
+              'routeId': route.id,
+              'ambulanceId': route.ambulanceId,
+              'emergencyId': route.emergencyId,
+              'priority': route.emergencyPriority,
+              'status': route.status.value,
+            },
+            priority: priority,
+          );
+        }
+
+        notificationsSent++;
+      }
+
+      log('Police notifications sent to $notificationsSent officers for route ${route.id}');
+      return true;
+    } catch (e) {
+      log('Error sending route notifications to police: $e');
+      return false;
+    }
+  }
+
+  // =============================================================================
+  // HOSPITAL NOTIFICATIONS
+  // =============================================================================
+
+  /// Send route status update notification to hospital staff
+  Future<bool> sendRouteNotificationToHospital({
+    required AmbulanceRouteModel route,
+    required String type,
+    required String hospitalId,
+    String? policeOfficerName,
+    String? completionReason,
+    String? driverName,
+  }) async {
+    try {
+      String title;
+      String message;
+      String emoji;
+      String priority;
+
+      switch (type) {
+        case 'route_cleared':
+          emoji = '✅';
+          title = 'Traffic Cleared';
+          message =
+              'Traffic cleared for Ambulance ${route.ambulanceLicensePlate} by '
+              '${policeOfficerName ?? 'Police'}. Route is now clear to proceed.';
+          priority = 'high';
+          break;
+        case 'route_timeout':
+          emoji = '⏰';
+          title = 'Route Timeout';
+          message =
+              'Route for Ambulance ${route.ambulanceLicensePlate} marked as timeout by '
+              '${policeOfficerName ?? 'Police'}. Consider alternative action.';
+          priority = 'high';
+          break;
+        case 'route_completed':
+          emoji = '🏁';
+          title = 'Route Completed';
+          message =
+              'Ambulance ${route.ambulanceLicensePlate} has arrived at destination. '
+              '${completionReason ?? 'Emergency response completed.'}';
+          priority = 'high';
+          break;
+        case 'route_reactivated':
+          emoji = '🔄';
+          title = 'Route Reactivated';
+          message =
+              'Route for Ambulance ${route.ambulanceLicensePlate} has been reactivated';
+          priority = 'normal';
+          break;
+        case 'driver_arrived':
+          emoji = '🚑';
+          title = 'Ambulance Arrived';
+          message =
+              'Driver ${driverName ?? 'Unknown'} has arrived at ${route.patientLocation}';
+          priority = 'high';
+          break;
+        case 'route_delayed':
+          emoji = '🚨';
+          title = 'Route Delayed';
+          message =
+              'Route for Ambulance ${route.ambulanceLicensePlate} is experiencing delays';
+          priority = 'high';
+          break;
+        default:
+          emoji = '📍';
+          title = 'Route Update';
+          message = 'Route update for Ambulance ${route.ambulanceLicensePlate}';
+          priority = 'normal';
+      }
+
+      // Get hospital staff
+      final hospitalQuery = await _firestore
+          .collection('users')
+          .where('role', whereIn: ['hospital_admin', 'hospital_staff'])
+          .where('roleSpecificData.hospitalId', isEqualTo: hospitalId)
+          .where('isActive', isEqualTo: true)
+          .get();
+
+      int notificationsSent = 0;
+
+      for (final doc in hospitalQuery.docs) {
+        final userId = doc.id;
+
+        // Create in-app notification
+        await _createInAppNotification(
+          recipientId: userId,
+          type: type,
+          title: '$emoji $title',
+          message: message,
+          data: {
+            'routeId': route.id,
+            'ambulanceId': route.ambulanceId,
+            'emergencyId': route.emergencyId,
+            'ambulanceLicensePlate': route.ambulanceLicensePlate,
+            'newStatus': route.status.value,
+            'policeOfficerId': route.policeOfficerId,
+            'policeOfficerName': policeOfficerName,
+            'patientLocation': route.patientLocation,
+            'completionReason': completionReason,
+            'driverName': driverName,
+            'statusUpdatedAt': route.statusUpdatedAt?.millisecondsSinceEpoch,
+            'clearedAt': route.clearedAt?.millisecondsSinceEpoch,
+            'completedAt': route.completedAt?.millisecondsSinceEpoch,
+          },
+          priority: priority,
+        );
+
+        // Send push notification for critical updates
+        if (priority == 'high' || priority == 'critical') {
+          await _queuePushNotification(
+            recipientId: userId,
+            title: title,
+            message: message,
+            data: {
+              'type': type,
+              'routeId': route.id,
+              'ambulanceId': route.ambulanceId,
+              'emergencyId': route.emergencyId,
+              'newStatus': route.status.value,
+              'policeOfficerName': policeOfficerName,
+              'completionReason': completionReason,
+            },
+            priority: priority,
+          );
+        }
+
+        notificationsSent++;
+      }
+
+      log('Hospital notifications sent to $notificationsSent staff for route ${route.id}');
+      return true;
+    } catch (e) {
+      log('Error sending route notifications to hospital: $e');
+      return false;
+    }
+  }
+
+  // =============================================================================
+  // DRIVER NOTIFICATIONS
+  // =============================================================================
+
+  /// Send notification to specific driver
+  Future<bool> sendNotificationToDriver({
+    required String driverId,
+    required String title,
+    required String message,
+    String type = 'driver_notification',
+    Map<String, dynamic>? data,
+    String priority = 'normal',
+  }) async {
+    try {
+      // Create in-app notification
+      await _createInAppNotification(
+        recipientId: driverId,
+        type: type,
+        title: title,
+        message: message,
+        data: data ?? {},
+        priority: priority,
+      );
+
+      // Queue push notification for important notifications
+      if (priority == 'high' ||
+          priority == 'critical' ||
+          type == 'emergency_assignment') {
+        await _queuePushNotification(
+          recipientId: driverId,
+          title: title,
+          message: message,
+          data: {
+            'type': type,
+            ...?data,
+          },
+          priority: priority,
+        );
+      }
+
+      log('Driver notification sent to: $driverId');
+      return true;
+    } catch (e) {
+      log('Error sending notification to driver: $e');
+      return false;
+    }
+  }
+
+  /// Send route completion notification to driver
+  Future<bool> sendRouteCompletionToDriver({
+    required String driverId,
+    required AmbulanceRouteModel route,
+    String? completionReason,
+  }) async {
+    return await sendNotificationToDriver(
+      driverId: driverId,
+      title: '🏁 Route Completed',
+      message:
+          'Route to ${route.patientLocation} completed. ${completionReason ?? 'You are now available for new assignments.'}',
+      type: 'route_completed',
+      data: {
+        'routeId': route.id,
+        'emergencyId': route.emergencyId,
+        'completionReason': completionReason,
+        'patientLocation': route.patientLocation,
+      },
+      priority: 'normal',
+    );
+  }
+
+  // =============================================================================
+  // CORE NOTIFICATION METHODS
+  // =============================================================================
+
+  /// Create in-app notification
+  Future<bool> _createInAppNotification({
+    required String recipientId,
+    required String type,
+    required String title,
+    required String message,
+    required Map<String, dynamic> data,
+    required String priority,
+  }) async {
+    try {
+      await _firestore.collection('notifications').add({
+        'type': type,
+        'title': title,
+        'message': message,
+        'recipientId': recipientId,
+        'priority': priority,
+        'isRead': false,
+        'createdAt': FieldValue.serverTimestamp(),
+        'data': data,
+      });
+
+      return true;
+    } catch (e) {
+      log('Error creating in-app notification: $e');
+      return false;
+    }
+  }
+
+  /// Queue push notification
+  Future<bool> _queuePushNotification({
+    required String recipientId,
+    required String title,
+    required String message,
+    required Map<String, dynamic> data,
+    required String priority,
+  }) async {
+    try {
+      // Get user's FCM token
+      final userDoc =
+          await _firestore.collection('users').doc(recipientId).get();
+      if (!userDoc.exists) return false;
+
+      final userData = userDoc.data() as Map<String, dynamic>;
+      final fcmToken = userData['fcmToken'] as String?;
+
+      if (fcmToken == null) {
+        log('No FCM token found for user: $recipientId');
+        return false;
+      }
+
+      // Send push notification
+      await _messaging.send(
+        Message(
+          token: fcmToken,
+          notification: Notification(
+            title: title,
+            body: message,
+          ),
+          data: {
+            ...data,
+            'priority': priority,
+            'timestamp': DateTime.now().millisecondsSinceEpoch.toString(),
+          },
+          android: AndroidConfig(
+            priority: priority == 'critical'
+                ? AndroidMessagePriority.high
+                : AndroidMessagePriority.normal,
+            notification: AndroidNotification(
+              channelId: _getChannelIdFromType(data['type'] ?? 'general'),
+              priority: priority == 'critical'
+                  ? AndroidNotificationPriority.max
+                  : AndroidNotificationPriority.high,
+              sound: priority == 'critical' ? 'emergency_alert' : 'default',
+            ),
+          ),
+          apns: ApnsConfig(
+            payload: ApnsPayload(
+              aps: Aps(
+                alert: ApsAlert(
+                  title: title,
+                  body: message,
+                ),
+                badge: 1,
+                sound:
+                    priority == 'critical' ? 'emergency_alert.wav' : 'default',
+                category: data['type'] ?? 'general',
+              ),
+            ),
+          ),
+        ),
+      );
+
+      log('Push notification queued for user: $recipientId');
+      return true;
+    } catch (e) {
+      log('Error queuing push notification: $e');
+      return false;
+    }
+  }
+
+  /// Send general push notification
+  Future<bool> sendPushNotification({
+    required String userId,
+    required String title,
+    required String message,
+    Map<String, dynamic>? data,
+    String priority = 'normal',
+  }) async {
+    return await _queuePushNotification(
+      recipientId: userId,
+      title: title,
+      message: message,
+      data: data ?? {},
+      priority: priority,
+    );
+  }
+
+  // =============================================================================
+  // NOTIFICATION MANAGEMENT
+  // =============================================================================
+
+  /// Get notifications for user
+  Stream<List<NotificationModel>> getUserNotifications(String userId) {
+    return _firestore
+        .collection('notifications')
+        .where('recipientId', isEqualTo: userId)
+        .orderBy('createdAt', descending: true)
+        .limit(50)
+        .snapshots()
+        .map((snapshot) => snapshot.docs
+            .map((doc) => NotificationModel.fromFirestore(doc))
+            .toList());
+  }
+
+  /// Mark notification as read
+  Future<void> markNotificationAsRead(String notificationId) async {
+    try {
+      await _firestore.collection('notifications').doc(notificationId).update({
+        'isRead': true,
+        'readAt': FieldValue.serverTimestamp(),
+      });
+    } catch (e) {
+      log('Error marking notification as read: $e');
+    }
+  }
+
+  /// Mark all notifications as read for user
+  Future<void> markAllNotificationsAsRead(String userId) async {
+    try {
+      final query = await _firestore
+          .collection('notifications')
+          .where('recipientId', isEqualTo: userId)
+          .where('isRead', isEqualTo: false)
+          .get();
+
+      final batch = _firestore.batch();
+      for (final doc in query.docs) {
+        batch.update(doc.reference, {
+          'isRead': true,
+          'readAt': FieldValue.serverTimestamp(),
+        });
+      }
+
+      await batch.commit();
+      log('Marked all notifications as read for user: $userId');
+    } catch (e) {
+      log('Error marking all notifications as read: $e');
+    }
+  }
+
+  /// Clear all notifications for user
+  Future<void> clearAllNotifications(String userId) async {
+    try {
+      final query = await _firestore
+          .collection('notifications')
+          .where('recipientId', isEqualTo: userId)
+          .get();
+
+      final batch = _firestore.batch();
+      for (final doc in query.docs) {
+        batch.delete(doc.reference);
+      }
+
+      await batch.commit();
+      log('Cleared all notifications for user: $userId');
+    } catch (e) {
+      log('Error clearing notifications: $e');
+    }
+  }
+
+  // =============================================================================
+  // INITIALIZATION HELPERS
+  // =============================================================================
+
   /// Initialize local notifications
   Future<void> _initializeLocalNotifications() async {
     const androidInitSettings =
@@ -85,7 +603,6 @@ class NotificationService {
 
   /// Create notification channels for Android
   Future<void> _createNotificationChannels() async {
-    // Emergency channel for critical alerts
     const emergencyChannel = AndroidNotificationChannel(
       'emergency_channel',
       'Emergency Notifications',
@@ -97,7 +614,6 @@ class NotificationService {
       sound: RawResourceAndroidNotificationSound('emergency_alert'),
     );
 
-    // Route channel for police notifications
     const routeChannel = AndroidNotificationChannel(
       'route_channel',
       'Route Notifications',
@@ -105,16 +621,15 @@ class NotificationService {
       importance: Importance.high,
       enableVibration: true,
       enableLights: true,
-      ledColor: Color.fromARGB(255, 0, 0, 255),
-      sound: RawResourceAndroidNotificationSound('route_alert'),
+      ledColor: Color.fromARGB(255, 0, 255, 0),
     );
 
-    // General channel for other notifications
     const generalChannel = AndroidNotificationChannel(
       'general_channel',
       'General Notifications',
       description: 'General app notifications and updates',
       importance: Importance.defaultImportance,
+      enableVibration: true,
     );
 
     await _localNotifications
@@ -133,157 +648,72 @@ class NotificationService {
         ?.createNotificationChannel(generalChannel);
   }
 
-  /// Setup Firebase message handlers
+  /// Set up Firebase message handlers
   void _setupMessageHandlers() {
     // Handle foreground messages
-    FirebaseMessaging.onMessage.listen(_handleForegroundMessage);
+    FirebaseMessaging.onMessage.listen((RemoteMessage message) {
+      log('Received foreground message: ${message.messageId}');
+      _handleForegroundMessage(message);
+    });
 
-    // Handle background message taps
-    FirebaseMessaging.onMessageOpenedApp.listen(_handleNotificationTap);
+    // Handle background messages
+    FirebaseMessaging.onBackgroundMessage(_firebaseMessagingBackgroundHandler);
 
-    // Handle app opened from terminated state
-    _messaging.getInitialMessage().then((message) {
-      if (message != null) {
-        _handleNotificationTap(message);
-      }
+    // Handle notification taps when app is terminated
+    FirebaseMessaging.onMessageOpenedApp.listen((RemoteMessage message) {
+      log('Notification tapped when app was in background: ${message.messageId}');
+      _handleNotificationTap(message.data);
     });
   }
 
   /// Handle foreground messages
-  Future<void> _handleForegroundMessage(RemoteMessage message) async {
-    log('Received foreground message: ${message.messageId}');
-
-    final notificationType = message.data['type'] ?? 'general';
+  void _handleForegroundMessage(RemoteMessage message) {
+    final data = message.data;
+    final type = data['type'] ?? 'general';
 
     // Show local notification for foreground messages
-    await _showLocalNotification(
-      title: message.notification?.title ?? _getDefaultTitle(notificationType),
-      body: message.notification?.body ?? _getDefaultBody(notificationType),
-      payload: jsonEncode(message.data),
-      type: notificationType,
+    _showLocalNotification(
+      title: message.notification?.title ?? 'Notification',
+      body: message.notification?.body ?? 'You have a new notification',
+      type: type,
+      data: data,
     );
   }
 
-  /// Handle notification tap
-  Future<void> _handleNotificationTap(RemoteMessage message) async {
-    log('Notification tapped: ${message.data}');
-    await _processNotificationAction(message.data);
-  }
-
-  /// Handle local notification tap
-  void _onNotificationTapped(NotificationResponse response) {
-    if (response.payload != null) {
-      try {
-        final data = jsonDecode(response.payload!) as Map<String, dynamic>;
-        _processNotificationAction(data);
-      } catch (e) {
-        log('Error parsing notification payload: $e');
-      }
-    }
-  }
-
-  /// Process notification action based on type
-  Future<void> _processNotificationAction(Map<String, dynamic> data) async {
-    final type = data['type'] as String?;
-
-    switch (type) {
-      case 'emergency_assignment':
-        _handleEmergencyAssignmentTap(data);
-        break;
-      case 'new_route':
-        _handleNewRouteTap(data);
-        break;
-      case 'route_update':
-        _handleRouteUpdateTap(data);
-        break;
-      case 'route_cleared':
-        _handleRouteClearedTap(data);
-        break;
-      case 'route_timeout':
-        _handleRouteTimeoutTap(data);
-        break;
-      default:
-        log('Unknown notification type: $type');
-    }
-  }
-
-  /// Show local notification with enhanced styling
+  /// Show local notification
   Future<void> _showLocalNotification({
     required String title,
     required String body,
-    String? payload,
-    String type = 'general',
+    required String type,
+    required Map<String, dynamic> data,
   }) async {
     final notificationId = DateTime.now().millisecondsSinceEpoch ~/ 1000;
-
-    // Determine channel and styling based on type
-    String channelId;
-    String? sound;
-    List<int> vibrationPattern;
-    Color? color;
-
-    switch (type) {
-      case 'emergency_assignment':
-      case 'new_route':
-        channelId = 'emergency_channel';
-        sound = 'emergency_alert';
-        vibrationPattern = [0, 1000, 500, 1000, 500, 1000];
-        color = const Color.fromARGB(255, 255, 0, 0);
-        break;
-      case 'route_update':
-      case 'route_cleared':
-      case 'route_timeout':
-        channelId = 'route_channel';
-        sound = 'route_alert';
-        vibrationPattern = [0, 500, 200, 500];
-        color = const Color.fromARGB(255, 0, 0, 255);
-        break;
-      default:
-        channelId = 'general_channel';
-        sound = null;
-        vibrationPattern = [0, 250];
-        color = null;
-    }
+    final channelId = _getChannelIdFromType(type);
 
     final androidDetails = AndroidNotificationDetails(
       channelId,
       _getChannelName(channelId),
       channelDescription: _getChannelDescription(channelId),
-      importance: type.contains('emergency') || type.contains('route')
-          ? Importance.max
-          : Importance.defaultImportance,
-      priority: type.contains('emergency') || type.contains('route')
-          ? Priority.high
-          : Priority.defaultPriority,
-      sound: sound != null ? RawResourceAndroidNotificationSound(sound) : null,
+      importance: type.contains('emergency') ? Importance.max : Importance.high,
+      priority: type.contains('emergency') ? Priority.max : Priority.high,
+      sound: type.contains('emergency')
+          ? const RawResourceAndroidNotificationSound('emergency_alert')
+          : null,
       enableVibration: true,
-      vibrationPattern: Int64List.fromList(vibrationPattern),
-      color: color,
-      colorized: color != null,
-      category: AndroidNotificationCategory.call,
-      fullScreenIntent: type == 'emergency_assignment',
+      vibrationPattern: type.contains('emergency')
+          ? Int64List.fromList([0, 250, 250, 250])
+          : Int64List.fromList([0, 200, 200, 200]),
       enableLights: true,
-      ledColor: color,
+      ledColor: type.contains('emergency') ? Colors.red : Colors.blue,
       ticker: title,
-      showWhen: true,
-      when: DateTime.now().millisecondsSinceEpoch,
-      usesChronometer: false,
-      timeoutAfter: type.contains('emergency') ? null : 30000,
-      ongoing: type == 'emergency_assignment',
       autoCancel: !type.contains('emergency'),
     );
 
-    final iosDetails = DarwinNotificationDetails(
-      sound: sound != null ? '$sound.wav' : null,
+    const iosDetails = DarwinNotificationDetails(
       presentAlert: true,
       presentBadge: true,
       presentSound: true,
-      badgeNumber: 1,
-      threadIdentifier: type,
-      categoryIdentifier: type,
-      interruptionLevel: type.contains('emergency')
-          ? InterruptionLevel.critical
-          : InterruptionLevel.active,
+      sound: 'default',
     );
 
     final details = NotificationDetails(
@@ -296,446 +726,54 @@ class NotificationService {
       title,
       body,
       details,
-      payload: payload,
+      payload: jsonEncode(data),
     );
   }
 
-  // EMERGENCY ASSIGNMENT NOTIFICATIONS
-
-  /// Send notification to specific driver for emergency assignment
-  Future<bool> sendNotificationToDriver({
-    required String driverId,
-    required String title,
-    required String message,
-    Map<String, dynamic>? data,
-  }) async {
-    try {
-      // Create in-app notification
-      await _createInAppNotification(
-        recipientId: driverId,
-        type: 'emergency_assignment',
-        title: title,
-        message: message,
-        data: data ?? {},
-        priority: 'high',
-      );
-
-      // Queue push notification
-      await _queuePushNotification(
-        recipientId: driverId,
-        title: title,
-        message: message,
-        data: {
-          'type': 'emergency_assignment',
-          ...?data,
-        },
-        priority: 'high',
-      );
-
-      log('Emergency assignment notification sent to driver: $driverId');
-      return true;
-    } catch (e) {
-      log('Error sending notification to driver: $e');
-      return false;
-    }
-  }
-
-  // POLICE ROUTE NOTIFICATIONS
-
-  /// Send new route notification to all police officers
-  Future<bool> sendNewRouteNotificationToPolice({
-    required AmbulanceRouteModel route,
-  }) async {
-    try {
-      final title =
-          '🚨 New ${route.emergencyPriority.toUpperCase()} Emergency Route';
-      final message =
-          'Ambulance ${route.ambulanceLicensePlate} dispatched to ${route.patientLocation}. ETA: ${route.formattedETA}';
-
-      // Get all active police officers
-      final policeQuery = await _firestore
-          .collection('users')
-          .where('role', isEqualTo: 'police')
-          .where('isActive', isEqualTo: true)
-          .get();
-
-      for (final doc in policeQuery.docs) {
-        final userId = doc.id;
-
-        // Create in-app notification
-        await _createInAppNotification(
-          recipientId: userId,
-          type: 'new_route',
-          title: title,
-          message: message,
-          data: {
-            'routeId': route.id,
-            'ambulanceId': route.ambulanceId,
-            'emergencyId': route.emergencyId,
-            'ambulanceLicensePlate': route.ambulanceLicensePlate,
-            'eta': route.etaMinutes,
-            'emergencyPriority': route.emergencyPriority,
-            'patientLocation': route.patientLocation,
-            'distance': route.formattedDistance,
-            'duration': route.formattedDuration,
-          },
-          priority: route.isHighPriority ? 'critical' : 'high',
-        );
-
-        // Queue push notification for high priority routes
-        if (route.isHighPriority) {
-          await _queuePushNotification(
-            recipientId: userId,
-            title: title,
-            message: message,
-            data: {
-              'type': 'new_route',
-              'routeId': route.id,
-              'ambulanceId': route.ambulanceId,
-              'emergencyId': route.emergencyId,
-              'priority': route.emergencyPriority,
-            },
-            priority: 'critical',
-          );
-        }
+  /// Handle notification tap
+  void _onNotificationTapped(NotificationResponse response) {
+    if (response.payload != null) {
+      try {
+        final data = jsonDecode(response.payload!) as Map<String, dynamic>;
+        _handleNotificationTap(data);
+      } catch (e) {
+        log('Error parsing notification payload: $e');
       }
-
-      log('New route notifications sent to ${policeQuery.docs.length} police officers');
-      return true;
-    } catch (e) {
-      log('Error sending new route notifications to police: $e');
-      return false;
     }
   }
 
-  // HOSPITAL ROUTE UPDATE NOTIFICATIONS
+  /// Handle notification tap navigation
+  void _handleNotificationTap(Map<String, dynamic> data) {
+    final type = data['type'] as String?;
 
-  /// Send route status update notification to hospital staff
-  Future<bool> sendRouteUpdateNotificationToHospital({
-    required AmbulanceRouteModel route,
-    required RouteStatus newStatus,
-    required String policeOfficerName,
-    required String hospitalId,
-  }) async {
-    try {
-      String title;
-      String message;
-      String emoji;
-
-      switch (newStatus) {
-        case RouteStatus.cleared:
-          emoji = '✅';
-          title = 'Route Cleared';
-          message =
-              'Route for Ambulance ${route.ambulanceLicensePlate} has been cleared by Officer $policeOfficerName';
-          break;
-        case RouteStatus.timeout:
-          emoji = '⏰';
-          title = 'Route Timeout';
-          message =
-              'Route for Ambulance ${route.ambulanceLicensePlate} marked as timeout by Officer $policeOfficerName';
-          break;
-        default:
-          emoji = '📍';
-          title = 'Route Update';
-          message =
-              'Route for Ambulance ${route.ambulanceLicensePlate} updated by Officer $policeOfficerName';
-      }
-
-      // Get hospital staff
-      final hospitalQuery = await _firestore
-          .collection('users')
-          .where('role', whereIn: ['hospital_admin', 'hospital_staff'])
-          .where('roleSpecificData.hospitalId', isEqualTo: hospitalId)
-          .where('isActive', isEqualTo: true)
-          .get();
-
-      for (final doc in hospitalQuery.docs) {
-        final userId = doc.id;
-
-        // Create in-app notification
-        await _createInAppNotification(
-          recipientId: userId,
-          type: 'route_update',
-          title: '$emoji $title',
-          message: message,
-          data: {
-            'routeId': route.id,
-            'ambulanceId': route.ambulanceId,
-            'emergencyId': route.emergencyId,
-            'ambulanceLicensePlate': route.ambulanceLicensePlate,
-            'newStatus': newStatus.value,
-            'policeOfficerId': route.policeOfficerId,
-            'policeOfficerName': policeOfficerName,
-            'patientLocation': route.patientLocation,
-          },
-          priority: 'normal',
-        );
-
-        // Queue push notification
-        await _queuePushNotification(
-          recipientId: userId,
-          title: title,
-          message: message,
-          data: {
-            'type': 'route_update',
-            'routeId': route.id,
-            'ambulanceId': route.ambulanceId,
-            'emergencyId': route.emergencyId,
-            'newStatus': newStatus.value,
-          },
-          priority: 'normal',
-        );
-      }
-
-      log('Route update notifications sent to ${hospitalQuery.docs.length} hospital staff');
-      return true;
-    } catch (e) {
-      log('Error sending route update notifications to hospital: $e');
-      return false;
+    switch (type) {
+      case 'emergency_assignment':
+        log('Emergency assignment tapped: ${data['emergencyId']}');
+        // Navigate to driver dashboard or emergency details
+        break;
+      case 'new_route':
+      case 'route_update':
+      case 'route_cleared':
+      case 'route_timeout':
+      case 'route_completed':
+        log('Route notification tapped: ${data['routeId']}');
+        // Navigate to appropriate dashboard or route details
+        break;
+      default:
+        log('General notification tapped');
+        // Navigate to notifications screen
+        break;
     }
   }
 
-  // GENERAL PUSH NOTIFICATION
-
-  /// Send general push notification to user
-  Future<bool> sendPushNotification({
-    required String userId,
-    required String title,
-    required String message,
-    Map<String, dynamic>? data,
-    String priority = 'normal',
-  }) async {
-    try {
-      await _queuePushNotification(
-        recipientId: userId,
-        title: title,
-        message: message,
-        data: data ?? {},
-        priority: priority,
-      );
-
-      return true;
-    } catch (e) {
-      log('Error sending push notification: $e');
-      return false;
-    }
-  }
-
-  // UTILITY METHODS
-
-  /// Create in-app notification document
-  Future<void> _createInAppNotification({
-    required String recipientId,
-    required String type,
-    required String title,
-    required String message,
-    required Map<String, dynamic> data,
-    String priority = 'normal',
-  }) async {
-    await _firestore.collection('notifications').add({
-      'type': type,
-      'title': title,
-      'message': message,
-      'recipientId': recipientId,
-      'priority': priority,
-      'isRead': false,
-      'createdAt': FieldValue.serverTimestamp(),
-      'data': data,
-    });
-  }
-
-  /// Queue push notification for processing by Cloud Functions
-  Future<void> _queuePushNotification({
-    required String recipientId,
-    required String title,
-    required String message,
-    required Map<String, dynamic> data,
-    String priority = 'normal',
-  }) async {
-    // Get user's FCM token
-    final userDoc = await _firestore.collection('users').doc(recipientId).get();
-    if (!userDoc.exists) return;
-
-    final userData = userDoc.data() as Map<String, dynamic>;
-    final fcmToken = userData['fcmToken'] as String?;
-
-    if (fcmToken == null || fcmToken.isEmpty) {
-      log('No FCM token found for user: $recipientId');
-      return;
-    }
-
-    // Queue for Cloud Functions processing
-    await _firestore.collection('notification_queue').add({
-      'recipientId': recipientId,
-      'fcmToken': fcmToken,
-      'title': title,
-      'message': message,
-      'data': data,
-      'priority': priority,
-      'createdAt': FieldValue.serverTimestamp(),
-      'processed': false,
-      'retryCount': 0,
-    });
-  }
-
-  /// Update user's FCM token
-  Future<void> updateUserFCMToken(String userId) async {
-    try {
-      final token = await _messaging.getToken();
-      if (token != null) {
-        await _firestore.collection('users').doc(userId).update({
-          'fcmToken': token,
-          'fcmTokenUpdatedAt': FieldValue.serverTimestamp(),
-        });
-        log('Updated FCM token for user: $userId');
-      }
-    } catch (e) {
-      log('Error updating FCM token: $e');
-    }
-  }
-
-  /// Get unread notifications for user
-  Stream<List<NotificationModel>> getNotificationsForUser(String userId) {
-    return _firestore
-        .collection('notifications')
-        .where('recipientId', isEqualTo: userId)
-        .orderBy('createdAt', descending: true)
-        .limit(50)
-        .snapshots()
-        .map((snapshot) => snapshot.docs
-            .map((doc) => NotificationModel.fromFirestore(doc))
-            .toList());
-  }
-
-  /// Get unread notification count
-  Stream<int> getUnreadNotificationCount(String userId) {
-    return _firestore
-        .collection('notifications')
-        .where('recipientId', isEqualTo: userId)
-        .where('isRead', isEqualTo: false)
-        .snapshots()
-        .map((snapshot) => snapshot.docs.length);
-  }
-
-  /// Mark notification as read
-  Future<void> markNotificationAsRead(String notificationId) async {
-    try {
-      await _firestore.collection('notifications').doc(notificationId).update({
-        'isRead': true,
-        'readAt': FieldValue.serverTimestamp(),
-      });
-    } catch (e) {
-      log('Error marking notification as read: $e');
-    }
-  }
-
-  /// Mark all notifications as read for user
-  Future<void> markAllNotificationsAsRead(String userId) async {
-    try {
-      final batch = _firestore.batch();
-      final notifications = await _firestore
-          .collection('notifications')
-          .where('recipientId', isEqualTo: userId)
-          .where('isRead', isEqualTo: false)
-          .get();
-
-      for (final doc in notifications.docs) {
-        batch.update(doc.reference, {
-          'isRead': true,
-          'readAt': FieldValue.serverTimestamp(),
-        });
-      }
-
-      await batch.commit();
-      log('Marked all notifications as read for user: $userId');
-    } catch (e) {
-      log('Error marking all notifications as read: $e');
-    }
-  }
-
-  /// Clear all notifications for user
-  Future<void> clearAllNotifications(String userId) async {
-    try {
-      final batch = _firestore.batch();
-      final notifications = await _firestore
-          .collection('notifications')
-          .where('recipientId', isEqualTo: userId)
-          .get();
-
-      for (final doc in notifications.docs) {
-        batch.delete(doc.reference);
-      }
-
-      await batch.commit();
-      log('Cleared all notifications for user: $userId');
-    } catch (e) {
-      log('Error clearing notifications: $e');
-    }
-  }
-
-  // NOTIFICATION ACTION HANDLERS
-
-  void _handleEmergencyAssignmentTap(Map<String, dynamic> data) {
-    log('Emergency assignment tapped: ${data['emergencyId']}');
-    // Navigate to driver dashboard or emergency details
-    // Implementation depends on your navigation system
-  }
-
-  void _handleNewRouteTap(Map<String, dynamic> data) {
-    log('New route tapped: ${data['routeId']}');
-    // Navigate to police dashboard or route details
-  }
-
-  void _handleRouteUpdateTap(Map<String, dynamic> data) {
-    log('Route update tapped: ${data['routeId']}');
-    // Navigate to hospital dashboard or route details
-  }
-
-  void _handleRouteClearedTap(Map<String, dynamic> data) {
-    log('Route cleared tapped: ${data['routeId']}');
-    // Navigate to route details or hospital dashboard
-  }
-
-  void _handleRouteTimeoutTap(Map<String, dynamic> data) {
-    log('Route timeout tapped: ${data['routeId']}');
-    // Navigate to route details or emergency management
-  }
-
+  // =============================================================================
   // HELPER METHODS
+  // =============================================================================
 
-  String _getDefaultTitle(String type) {
-    switch (type) {
-      case 'emergency_assignment':
-        return 'Emergency Assignment';
-      case 'new_route':
-        return 'New Emergency Route';
-      case 'route_update':
-        return 'Route Update';
-      case 'route_cleared':
-        return 'Route Cleared';
-      case 'route_timeout':
-        return 'Route Timeout';
-      default:
-        return 'Notification';
-    }
-  }
-
-  String _getDefaultBody(String type) {
-    switch (type) {
-      case 'emergency_assignment':
-        return 'You have been assigned to a new emergency';
-      case 'new_route':
-        return 'New ambulance route requires attention';
-      case 'route_update':
-        return 'Route status has been updated';
-      case 'route_cleared':
-        return 'Traffic has been cleared for route';
-      case 'route_timeout':
-        return 'Route has timed out';
-      default:
-        return 'You have a new notification';
-    }
+  String _getChannelIdFromType(String type) {
+    if (type.contains('emergency')) return 'emergency_channel';
+    if (type.contains('route')) return 'route_channel';
+    return 'general_channel';
   }
 
   String _getChannelName(String channelId) {
@@ -763,6 +801,13 @@ class NotificationService {
         return 'App notifications';
     }
   }
+}
+
+/// Background message handler
+@pragma('vm:entry-point')
+Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
+  log('Background message received: ${message.messageId}');
+  // Handle background message processing here
 }
 
 /// Enhanced notification model for in-app notifications
@@ -807,50 +852,17 @@ class NotificationModel {
     );
   }
 
-  String get timeAgo {
-    final now = DateTime.now();
-    final difference = now.difference(createdAt);
-
-    if (difference.inMinutes < 1) {
-      return 'Just now';
-    } else if (difference.inMinutes < 60) {
-      return '${difference.inMinutes}m ago';
-    } else if (difference.inHours < 24) {
-      return '${difference.inHours}h ago';
-    } else {
-      return '${difference.inDays}d ago';
-    }
-  }
-
-  Color get priorityColor {
-    switch (priority) {
-      case 'critical':
-        return const Color.fromARGB(255, 255, 0, 0);
-      case 'high':
-        return const Color.fromARGB(255, 255, 165, 0);
-      case 'normal':
-        return const Color.fromARGB(255, 0, 123, 255);
-      case 'low':
-        return const Color.fromARGB(255, 108, 117, 125);
-      default:
-        return const Color.fromARGB(255, 108, 117, 125);
-    }
-  }
-
-  IconData get typeIcon {
-    switch (type) {
-      case 'emergency_assignment':
-        return Icons.emergency;
-      case 'new_route':
-        return Icons.route;
-      case 'route_update':
-        return Icons.update;
-      case 'route_cleared':
-        return Icons.check_circle;
-      case 'route_timeout':
-        return Icons.timer_off;
-      default:
-        return Icons.notifications;
-    }
+  Map<String, dynamic> toFirestore() {
+    return {
+      'type': type,
+      'title': title,
+      'message': message,
+      'recipientId': recipientId,
+      'priority': priority,
+      'isRead': isRead,
+      'createdAt': Timestamp.fromDate(createdAt),
+      'readAt': readAt != null ? Timestamp.fromDate(readAt!) : null,
+      'data': data,
+    };
   }
 }

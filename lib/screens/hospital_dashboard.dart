@@ -23,13 +23,13 @@ class _HospitalDashboardScreenState
     with SingleTickerProviderStateMixin {
   late TabController _tabController;
   final TextEditingController _searchController = TextEditingController();
-  String? hospitalId = 'default'; // Replace with actual hospital ID logic
+  String? hospitalId;
 
   @override
   void initState() {
     super.initState();
-    // Updated to 4 tabs: Overview, Active Routes, Route History, Route Map
     _tabController = TabController(length: 4, vsync: this);
+    _loadHospitalId();
   }
 
   @override
@@ -39,8 +39,53 @@ class _HospitalDashboardScreenState
     super.dispose();
   }
 
+  Future<void> _loadHospitalId() async {
+    try {
+      final currentUser = await ref.read(currentUserProvider.future);
+      if (currentUser != null && mounted) {
+        setState(() {
+          hospitalId = currentUser.roleSpecificData.hospitalId ?? 'default';
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          hospitalId = 'default'; // Fallback
+        });
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error loading hospital data: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
+    if (hospitalId == null) {
+      return Scaffold(
+        appBar: AppBar(
+          title: const Text(
+            'Hospital Dashboard',
+            style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+          ),
+          backgroundColor: Colors.red.shade700,
+        ),
+        body: const Center(
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              CircularProgressIndicator(),
+              SizedBox(height: 16),
+              Text('Loading hospital information...'),
+            ],
+          ),
+        ),
+      );
+    }
+
     final hospitalStats =
         ref.watch(hospitalRouteStatisticsProvider(hospitalId!));
 
@@ -56,9 +101,12 @@ class _HospitalDashboardScreenState
           IconButton(
             icon: const Icon(Icons.refresh, color: Colors.white),
             onPressed: () {
+              // Fixed: Include all relevant providers in refresh
               ref.invalidate(hospitalRoutesProvider);
               ref.invalidate(hospitalActiveRoutesProvider);
               ref.invalidate(hospitalRouteHistoryProvider);
+              ref.invalidate(emergencyStatsProvider);
+              ref.invalidate(hospitalRouteStatisticsProvider);
             },
             tooltip: 'Refresh',
           ),
@@ -233,120 +281,205 @@ class _HospitalDashboardScreenState
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // Recent Emergencies Section
-          _buildRecentEmergenciesSection(emergencyStats),
-          const SizedBox(height: 24),
+          // Emergency Statistics Card
+          Card(
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Icon(Icons.emergency, color: Colors.red.shade600),
+                      const SizedBox(width: 8),
+                      const Text(
+                        'Emergency Statistics',
+                        style: TextStyle(
+                          fontSize: 18,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 16),
+                  emergencyStats.when(
+                    data: (stats) => _buildEmergencyStatsGrid(stats),
+                    loading: () =>
+                        const Center(child: CircularProgressIndicator()),
+                    error: (error, stack) =>
+                        Text('Error loading emergency stats: $error'),
+                  ),
+                ],
+              ),
+            ),
+          ),
 
-          // Active Routes Summary Section
-          _buildActiveRoutesSummary(activeRoutesAsync),
+          const SizedBox(height: 16),
+
+          // Recent Active Routes Card
+          Card(
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Icon(Icons.route, color: Colors.blue.shade600),
+                      const SizedBox(width: 8),
+                      const Text(
+                        'Recent Active Routes',
+                        style: TextStyle(
+                          fontSize: 18,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 16),
+                  activeRoutesAsync.when(
+                    data: (routes) {
+                      final recentRoutes = routes.take(5).toList();
+                      if (recentRoutes.isEmpty) {
+                        return const Center(
+                          child: Text(
+                            'No active routes',
+                            style: TextStyle(color: Colors.grey),
+                          ),
+                        );
+                      }
+                      return Column(
+                        children: recentRoutes
+                            .map((route) => _buildRouteListItem(route))
+                            .toList(),
+                      );
+                    },
+                    loading: () =>
+                        const Center(child: CircularProgressIndicator()),
+                    error: (error, stack) =>
+                        Text('Error loading routes: $error'),
+                  ),
+                ],
+              ),
+            ),
+          ),
         ],
       ),
     );
   }
 
-  Widget _buildActiveRoutesSummary(
-      AsyncValue<List<AmbulanceRouteModel>> activeRoutesAsync) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
+  Widget _buildEmergencyStatsGrid(Map<String, int> stats) {
+    return GridView.count(
+      shrinkWrap: true,
+      physics: const NeverScrollableScrollPhysics(),
+      crossAxisCount: 2,
+      childAspectRatio: 2.5,
+      mainAxisSpacing: 8,
+      crossAxisSpacing: 8,
       children: [
-        Row(
-          children: [
-            const Text(
-              'Active Routes',
-              style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
-            ),
-            const Spacer(),
-            TextButton(
-              onPressed: () => _tabController.animateTo(1),
-              child: const Text('View All'),
-            ),
-          ],
-        ),
-        const SizedBox(height: 16),
-        activeRoutesAsync.when(
-          data: (routes) {
-            if (routes.isEmpty) {
-              return Container(
-                padding: const EdgeInsets.all(24),
-                decoration: BoxDecoration(
-                  color: Colors.grey.shade100,
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: const Center(
-                  child: Text('No active routes'),
-                ),
-              );
-            }
-
-            return Column(
-              children: routes
-                  .take(3)
-                  .map((route) => _buildRouteSummaryTile(route))
-                  .toList(),
-            );
-          },
-          loading: () => const Center(child: CircularProgressIndicator()),
-          error: (error, stack) => Text('Error: $error'),
-        ),
+        _buildMiniStatCard('Active', stats['active'] ?? 0, Colors.orange),
+        _buildMiniStatCard('Pending', stats['pending'] ?? 0, Colors.blue),
+        _buildMiniStatCard('Critical', stats['critical'] ?? 0, Colors.red),
+        _buildMiniStatCard(
+            'Completed Today', stats['completedToday'] ?? 0, Colors.green),
       ],
     );
   }
 
-  Widget _buildRouteSummaryTile(AmbulanceRouteModel route) {
-    return Card(
-      margin: const EdgeInsets.only(bottom: 8),
-      child: ListTile(
-        leading: Container(
-          width: 40,
-          height: 40,
-          decoration: BoxDecoration(
-            color: Color(route.status.colorValue).withOpacity(0.1),
-            borderRadius: BorderRadius.circular(8),
-          ),
-          child: Icon(
-            Icons.route,
-            color: Color(route.status.colorValue),
-          ),
-        ),
-        title: Text('Ambulance ${route.ambulanceLicensePlate}'),
-        subtitle: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              '${route.patientLocation} • ${route.formattedDistance}',
-              style: const TextStyle(fontSize: 12),
-            ),
-            Text(
-              route.getStatusDescription('hospital_admin'),
-              style: TextStyle(
-                fontSize: 11,
-                fontWeight: FontWeight.w500,
-                color: Color(route.status.colorValue),
-              ),
-            ),
-          ],
-        ),
-        trailing: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-          decoration: BoxDecoration(
-            color: route.isHighPriority
-                ? Colors.red.withOpacity(0.1)
-                : Colors.orange.withOpacity(0.1),
-            borderRadius: BorderRadius.circular(12),
-            border: Border.all(
-              color: route.isHighPriority ? Colors.red : Colors.orange,
+  Widget _buildMiniStatCard(String title, int value, Color color) {
+    return Container(
+      padding: const EdgeInsets.all(8),
+      decoration: BoxDecoration(
+        color: color.withOpacity(0.1),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: color.withOpacity(0.3)),
+      ),
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Text(
+            value.toString(),
+            style: TextStyle(
+              fontSize: 16,
+              fontWeight: FontWeight.bold,
+              color: color,
             ),
           ),
-          child: Text(
-            'ETA: ${route.formattedETA}',
+          Text(
+            title,
             style: TextStyle(
               fontSize: 10,
-              fontWeight: FontWeight.bold,
-              color: route.isHighPriority ? Colors.red : Colors.orange,
+              color: color,
+            ),
+            textAlign: TextAlign.center,
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildRouteListItem(AmbulanceRouteModel route) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 8),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        border: Border.all(color: Colors.grey.shade300),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Row(
+        children: [
+          Icon(
+            Icons.local_shipping,
+            color: route.isHighPriority ? Colors.red : Colors.orange,
+            size: 20,
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  route.ambulanceLicensePlate,
+                  style: const TextStyle(fontWeight: FontWeight.bold),
+                ),
+                Text(
+                  route.patientLocation,
+                  style: const TextStyle(fontSize: 12, color: Colors.grey),
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ],
             ),
           ),
-        ),
-        onTap: () => _showRouteDetails(route),
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                decoration: BoxDecoration(
+                  color: route.isHighPriority ? Colors.red : Colors.orange,
+                  borderRadius: BorderRadius.circular(4),
+                ),
+                child: Text(
+                  route.emergencyPriority.toUpperCase(),
+                  style: const TextStyle(
+                    fontSize: 10,
+                    color: Colors.white,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                'ETA: ${route.formattedETA}',
+                style: TextStyle(
+                  fontSize: 10,
+                  fontWeight: FontWeight.bold,
+                  color: route.isHighPriority ? Colors.red : Colors.orange,
+                ),
+              ),
+            ],
+          ),
+        ],
       ),
     );
   }
@@ -423,7 +556,7 @@ class _HospitalDashboardScreenState
 
     return Column(
       children: [
-        // Search and Filter Section for History
+        // Search and Filter Section
         _buildHistorySearchAndFilters(),
 
         // History List
@@ -456,7 +589,7 @@ class _HospitalDashboardScreenState
                 itemCount: routes.length,
                 itemBuilder: (context, index) {
                   final route = routes[index];
-                  return _buildHistoryRouteCard(route);
+                  return _buildRouteCard(route, showActions: true);
                 },
               );
             },
@@ -483,321 +616,172 @@ class _HospitalDashboardScreenState
     );
   }
 
-  Widget _buildHistoryRouteCard(AmbulanceRouteModel route) {
-    final historyInfo = route.historyInfo;
-
+  Widget _buildRouteCard(AmbulanceRouteModel route,
+      {required bool showActions}) {
     return Card(
-      margin: const EdgeInsets.only(bottom: 16),
-      elevation: 2,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            // Header with ambulance and completion info
-            Row(
-              children: [
-                Container(
-                  padding: const EdgeInsets.all(8),
-                  decoration: BoxDecoration(
-                    color: Colors.grey.withOpacity(0.1),
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  child: const Icon(Icons.local_shipping, color: Colors.grey),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        'Ambulance ${route.ambulanceLicensePlate}',
-                        style: const TextStyle(
-                          fontWeight: FontWeight.bold,
-                          fontSize: 16,
-                        ),
-                      ),
-                      Text(
-                        'Completed ${_formatDate(route.completedAt)}',
-                        style: TextStyle(
-                          color: Colors.grey.shade600,
-                          fontSize: 12,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                  decoration: BoxDecoration(
-                    color: route.isHighPriority
-                        ? Colors.red.withOpacity(0.1)
-                        : Colors.orange.withOpacity(0.1),
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  child: Text(
-                    route.emergencyPriority.toUpperCase(),
-                    style: TextStyle(
-                      fontSize: 10,
-                      fontWeight: FontWeight.bold,
-                      color: route.isHighPriority ? Colors.red : Colors.orange,
+      margin: const EdgeInsets.only(bottom: 12),
+      child: InkWell(
+        onTap: () => _showRouteDetails(route),
+        borderRadius: BorderRadius.circular(8),
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            children: [
+              Row(
+                children: [
+                  // Status indicator
+                  Container(
+                    width: 12,
+                    height: 12,
+                    decoration: BoxDecoration(
+                      color: Color(route.status.colorValue),
+                      shape: BoxShape.circle,
                     ),
                   ),
-                ),
-              ],
-            ),
+                  const SizedBox(width: 12),
 
-            const SizedBox(height: 12),
-
-            // Emergency details
-            _buildHistoryDetailRow(
-              'Emergency Location',
-              route.patientLocation,
-              Icons.location_on,
-            ),
-
-            _buildHistoryDetailRow(
-              'Distance & Duration',
-              '${route.formattedDistance} • ${route.formattedDuration}',
-              Icons.route,
-            ),
-
-            if (historyInfo['completion']['duration'] != null)
-              _buildHistoryDetailRow(
-                'Total Time',
-                '${historyInfo['completion']['duration']} minutes',
-                Icons.timer,
-              ),
-
-            // Police clearance info
-            if (historyInfo['police'] != null) ...[
-              const SizedBox(height: 8),
-              Container(
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  color: Colors.green.shade50,
-                  borderRadius: BorderRadius.circular(8),
-                  border: Border.all(color: Colors.green.shade200),
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
+                  // Route info
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Icon(Icons.local_police,
-                            size: 16, color: Colors.green.shade700),
-                        const SizedBox(width: 4),
+                        Row(
+                          children: [
+                            Text(
+                              route.ambulanceLicensePlate,
+                              style: const TextStyle(
+                                fontWeight: FontWeight.bold,
+                                fontSize: 16,
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 6,
+                                vertical: 2,
+                              ),
+                              decoration: BoxDecoration(
+                                color: route.isHighPriority
+                                    ? Colors.red
+                                    : Colors.orange,
+                                borderRadius: BorderRadius.circular(4),
+                              ),
+                              child: Text(
+                                route.emergencyPriority.toUpperCase(),
+                                style: const TextStyle(
+                                  fontSize: 10,
+                                  color: Colors.white,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 4),
                         Text(
-                          'Traffic Cleared by Police',
-                          style: TextStyle(
-                            fontWeight: FontWeight.w600,
-                            color: Colors.green.shade700,
-                            fontSize: 12,
+                          route.patientLocation,
+                          style: const TextStyle(
+                            fontSize: 14,
+                            color: Colors.grey,
                           ),
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                        const SizedBox(height: 4),
+                        Row(
+                          children: [
+                            Icon(
+                              Icons.location_on,
+                              size: 14,
+                              color: Colors.grey.shade600,
+                            ),
+                            const SizedBox(width: 4),
+                            Text(
+                              route.formattedDistance,
+                              style: TextStyle(
+                                fontSize: 12,
+                                color: Colors.grey.shade600,
+                              ),
+                            ),
+                            const SizedBox(width: 16),
+                            Icon(
+                              Icons.access_time,
+                              size: 14,
+                              color: Colors.grey.shade600,
+                            ),
+                            const SizedBox(width: 4),
+                            Text(
+                              route.formattedDuration,
+                              style: TextStyle(
+                                fontSize: 12,
+                                color: Colors.grey.shade600,
+                              ),
+                            ),
+                          ],
                         ),
                       ],
                     ),
-                    const SizedBox(height: 4),
-                    Text(
-                      'Officer: ${historyInfo['police']['officerName']}',
-                      style: const TextStyle(fontSize: 11),
-                    ),
-                    if (historyInfo['police']['clearedAt'] != null)
-                      Text(
-                        'Cleared: ${_formatDate(historyInfo['police']['clearedAt'])}',
-                        style: const TextStyle(fontSize: 11),
-                      ),
-                  ],
-                ),
-              ),
-            ],
-
-            const SizedBox(height: 12),
-
-            // Action button
-            SizedBox(
-              width: double.infinity,
-              child: OutlinedButton.icon(
-                onPressed: () => _showRouteDetails(route),
-                icon: const Icon(Icons.visibility, size: 16),
-                label: const Text('View Details'),
-                style: OutlinedButton.styleFrom(
-                  padding: const EdgeInsets.symmetric(vertical: 8),
-                ),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildHistoryDetailRow(String label, String value, IconData icon) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 4),
-      child: Row(
-        children: [
-          Icon(icon, size: 16, color: Colors.grey.shade600),
-          const SizedBox(width: 8),
-          Text(
-            '$label: ',
-            style: TextStyle(
-              fontWeight: FontWeight.w500,
-              fontSize: 12,
-              color: Colors.grey.shade700,
-            ),
-          ),
-          Expanded(
-            child: Text(
-              value,
-              style: const TextStyle(fontSize: 12),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildRouteCard(AmbulanceRouteModel route, {bool showActions = true}) {
-    return Card(
-      margin: const EdgeInsets.only(bottom: 16),
-      elevation: 2,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Container(
-                  padding: const EdgeInsets.all(8),
-                  decoration: BoxDecoration(
-                    color: Color(route.status.colorValue).withOpacity(0.1),
-                    borderRadius: BorderRadius.circular(8),
                   ),
-                  child: Icon(
-                    Icons.local_shipping,
-                    color: Color(route.status.colorValue),
-                  ),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
+
+                  // Status and ETA
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.end,
                     children: [
                       Text(
-                        'Ambulance ${route.ambulanceLicensePlate}',
-                        style: const TextStyle(
-                          fontWeight: FontWeight.bold,
-                          fontSize: 16,
-                        ),
-                      ),
-                      Text(
-                        route.getStatusDescription('hospital_admin'),
+                        route.status.displayName,
                         style: TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.bold,
                           color: Color(route.status.colorValue),
-                          fontWeight: FontWeight.w500,
-                          fontSize: 13,
                         ),
                       ),
+                      if (route.status != RouteStatus.completed) ...[
+                        const SizedBox(height: 4),
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 6,
+                            vertical: 2,
+                          ),
+                          decoration: BoxDecoration(
+                            color: route.isHighPriority
+                                ? Colors.red
+                                : Colors.orange,
+                            borderRadius: BorderRadius.circular(4),
+                          ),
+                          child: Text(
+                            'ETA: ${route.formattedETA}',
+                            style: const TextStyle(
+                              fontSize: 10,
+                              fontWeight: FontWeight.bold,
+                              color: Colors.white,
+                            ),
+                          ),
+                        ),
+                      ],
                     ],
                   ),
-                ),
-                Column(
-                  crossAxisAlignment: CrossAxisAlignment.end,
+                ],
+              ),
+              if (showActions) ...[
+                const SizedBox(height: 12),
+                const Divider(),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                   children: [
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 8, vertical: 4),
-                      decoration: BoxDecoration(
-                        color: route.isHighPriority
-                            ? Colors.red.withOpacity(0.1)
-                            : Colors.orange.withOpacity(0.1),
-                        borderRadius: BorderRadius.circular(8),
-                      ),
-                      child: Text(
-                        'ETA: ${route.formattedETA}',
-                        style: TextStyle(
-                          fontWeight: FontWeight.bold,
-                          fontSize: 12,
-                          color:
-                              route.isHighPriority ? Colors.red : Colors.orange,
-                        ),
-                      ),
+                    TextButton.icon(
+                      onPressed: () => _showRouteDetails(route),
+                      icon: const Icon(Icons.info_outline, size: 16),
+                      label: const Text('Details'),
                     ),
-                    const SizedBox(height: 4),
-                    Text(
-                      route.formattedDistance,
-                      style: TextStyle(
-                        color: Colors.grey.shade600,
-                        fontSize: 12,
-                      ),
+                    TextButton.icon(
+                      onPressed: () => _exportRouteReport(route),
+                      icon: const Icon(Icons.download, size: 16),
+                      label: const Text('Export'),
                     ),
                   ],
                 ),
               ],
-            ),
-            const SizedBox(height: 12),
-            Row(
-              children: [
-                Icon(Icons.location_on, size: 16, color: Colors.grey.shade600),
-                const SizedBox(width: 4),
-                Expanded(
-                  child: Text(
-                    route.patientLocation,
-                    style: TextStyle(color: Colors.grey.shade600),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                ),
-              ],
-            ),
-            if (route.statusNotes != null && route.statusNotes!.isNotEmpty) ...[
-              const SizedBox(height: 8),
-              Container(
-                padding: const EdgeInsets.all(8),
-                decoration: BoxDecoration(
-                  color: Colors.grey.shade100,
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: Row(
-                  children: [
-                    Icon(Icons.note, size: 16, color: Colors.grey.shade600),
-                    const SizedBox(width: 4),
-                    Expanded(
-                      child: Text(
-                        route.statusNotes!,
-                        style: TextStyle(
-                          color: Colors.grey.shade700,
-                          fontSize: 12,
-                          fontStyle: FontStyle.italic,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
             ],
-            if (showActions) ...[
-              const SizedBox(height: 12),
-              SizedBox(
-                width: double.infinity,
-                child: ElevatedButton.icon(
-                  onPressed: () => _showRouteDetails(route),
-                  icon: const Icon(Icons.visibility, size: 16),
-                  label: const Text('View Details'),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: Colors.red.shade700,
-                    foregroundColor: Colors.white,
-                    padding: const EdgeInsets.symmetric(vertical: 8),
-                  ),
-                ),
-              ),
-            ],
-          ],
+          ),
         ),
       ),
     );
@@ -824,22 +808,19 @@ class _HospitalDashboardScreenState
               filled: true,
               fillColor: Colors.white,
             ),
-            onChanged: (value) {
-              // Implement search functionality
-            },
           ),
           const SizedBox(height: 8),
           SingleChildScrollView(
             scrollDirection: Axis.horizontal,
             child: Row(
               children: [
-                _buildFilterChip('All Statuses', true),
+                _buildFilterChip('All Routes', true),
                 const SizedBox(width: 8),
-                _buildFilterChip('En Route', false),
+                _buildFilterChip('Critical Priority', false),
                 const SizedBox(width: 8),
                 _buildFilterChip('Traffic Cleared', false),
                 const SizedBox(width: 8),
-                _buildFilterChip('Critical Priority', false),
+                _buildFilterChip('En Route', false),
               ],
             ),
           ),
@@ -894,7 +875,7 @@ class _HospitalDashboardScreenState
       label: Text(label),
       selected: isSelected,
       onSelected: (selected) {
-        // Implement filter functionality
+        // TODO: Implement filter functionality
       },
       selectedColor: Colors.red.shade100,
       checkmarkColor: Colors.red.shade700,
@@ -903,12 +884,6 @@ class _HospitalDashboardScreenState
 
   Widget _buildRouteMapTab() {
     return HospitalRouteMapScreen(hospitalId: hospitalId!);
-  }
-
-  // Helper methods and existing code...
-  Widget _buildRecentEmergenciesSection(dynamic emergencyStats) {
-    // Implementation for recent emergencies section
-    return Container(); // Placeholder
   }
 
   void _showRouteDetails(AmbulanceRouteModel route) {
@@ -920,8 +895,12 @@ class _HospitalDashboardScreenState
     );
   }
 
+  void _exportRouteReport(AmbulanceRouteModel route) {
+    _showComingSoon(context, 'Route Export');
+  }
+
   void _showNotifications() {
-    // Implementation for notifications
+    _showComingSoon(context, 'Notifications');
   }
 
   void _showComingSoon(BuildContext context, String feature) {
@@ -938,26 +917,40 @@ class _HospitalDashboardScreenState
         content: const Text('Are you sure you want to sign out?'),
         actions: [
           TextButton(
-            onPressed: () => Navigator.pop(context),
+            onPressed: () => Navigator.of(context).pop(),
             child: const Text('Cancel'),
           ),
-          TextButton(
-            onPressed: () {
-              ref.read(authServiceProvider).signOut();
-              Navigator.pushReplacement(
-                context,
-                MaterialPageRoute(builder: (context) => const LoginScreen()),
-              );
+          ElevatedButton(
+            onPressed: () async {
+              Navigator.of(context).pop(); // Close dialog first
+              try {
+                // Use the correct authServiceProvider
+                final authService = ref.read(authServiceProvider);
+                await authService.signOut();
+                if (context.mounted) {
+                  Navigator.of(context).pushAndRemoveUntil(
+                    MaterialPageRoute(
+                        builder: (context) => const LoginScreen()),
+                    (route) => false,
+                  );
+                }
+              } catch (e) {
+                if (context.mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Text('Error signing out: $e'),
+                      backgroundColor: Colors.red,
+                    ),
+                  );
+                }
+              }
             },
-            child: const Text('Sign Out'),
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
+            child:
+                const Text('Sign Out', style: TextStyle(color: Colors.white)),
           ),
         ],
       ),
     );
-  }
-
-  String _formatDate(DateTime? date) {
-    if (date == null) return 'Unknown';
-    return '${date.day}/${date.month}/${date.year} at ${date.hour}:${date.minute.toString().padLeft(2, '0')}';
   }
 }

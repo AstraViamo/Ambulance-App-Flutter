@@ -538,6 +538,167 @@ class NotificationService {
     }
   }
 
+  // Add these methods to your existing NotificationService class
+// (lib/services/notification_service.dart)
+
+  /// Send notification to all hospital staff
+  Future<bool> sendNotificationToHospital({
+    required String hospitalId,
+    required String type,
+    required String title,
+    required String message,
+    required Map<String, dynamic> data,
+    String priority = 'normal',
+  }) async {
+    try {
+      log('Sending notification to hospital $hospitalId: $title');
+
+      // Get all hospital staff for this hospital
+      final hospitalStaffQuery = await _firestore
+          .collection('users')
+          .where('role', whereIn: ['hospital_admin', 'hospital_staff'])
+          .where('roleSpecificData.hospitalId', isEqualTo: hospitalId)
+          .where('isActive', isEqualTo: true)
+          .get();
+
+      if (hospitalStaffQuery.docs.isEmpty) {
+        log('No hospital staff found for hospital $hospitalId');
+        return false;
+      }
+
+      bool allSuccess = true;
+      int notificationsSent = 0;
+
+      // Send notification to each hospital staff member
+      for (final doc in hospitalStaffQuery.docs) {
+        final userId = doc.id;
+
+        final success = await sendNotificationToUser(
+          userId: userId,
+          type: type,
+          title: title,
+          message: message,
+          data: {
+            'hospitalId': hospitalId,
+            ...data,
+          },
+          priority: priority,
+        );
+
+        if (success) {
+          notificationsSent++;
+        } else {
+          allSuccess = false;
+        }
+      }
+
+      log('Sent notifications to $notificationsSent hospital staff members');
+      return allSuccess;
+    } catch (e) {
+      log('Error sending notification to hospital: $e');
+      return false;
+    }
+  }
+
+  /// Send emergency notification to hospital (alias for backward compatibility)
+  Future<bool> sendEmergencyNotificationToHospital({
+    required String hospitalId,
+    required String emergencyId,
+    required EmergencyPriority priority,
+    required String description,
+    required String location,
+  }) async {
+    return await sendNotificationToHospital(
+      hospitalId: hospitalId,
+      type: 'new_emergency',
+      title: '🚨 New Emergency',
+      message: 'New ${priority.displayName} priority emergency at $location',
+      data: {
+        'emergencyId': emergencyId,
+        'priority': priority.value,
+        'description': description,
+        'location': location,
+      },
+      priority: priority == EmergencyPriority.critical ? 'critical' : 'high',
+    );
+  }
+
+  /// Send route completion notification to driver
+  Future<bool> sendRouteCompletionToDriver({
+    required String driverId,
+    required AmbulanceRouteModel route,
+    required String completionReason,
+  }) async {
+    return await sendNotificationToUser(
+      userId: driverId,
+      type: 'route_completed',
+      title: '✅ Route Completed',
+      message: 'Emergency route completed. $completionReason',
+      data: {
+        'routeId': route.id,
+        'emergencyId': route.emergencyId,
+        'completionReason': completionReason,
+        'ambulanceLicensePlate': route.ambulanceLicensePlate,
+      },
+      priority: 'normal',
+    );
+  }
+
+  /// Send notification to a specific driver (used in AmbulanceAssignmentService)
+  Future<void> sendNotificationToDriver({
+    required String driverId,
+    required String title,
+    required String message,
+    required Map<String, dynamic> data,
+  }) async {
+    try {
+      log('Sending notification to driver $driverId: $title - $message');
+
+      // First create the in-app notification
+      await _createInAppNotification(
+        recipientId: driverId,
+        type: data['type'] ?? 'emergency_assignment',
+        title: title,
+        message: message,
+        data: data,
+        priority: data['priority'] ?? 'high',
+      );
+
+      // Then send the push notification
+      final success = await sendNotificationViaCloudFunction(
+        recipientId: driverId,
+        title: title,
+        message: message,
+        data: data,
+        priority: data['priority'] ?? 'high',
+      );
+
+      if (!success) {
+        log('Fallback to direct notification for driver $driverId');
+        await _sendDirectNotification(
+          recipientId: driverId,
+          title: title,
+          message: message,
+          data: data,
+          priority: data['priority'] ?? 'high',
+        );
+      }
+
+      // Also show local notification
+      await _showLocalNotification(
+        title: title,
+        body: message,
+        type: data['type'] ?? 'emergency_assignment',
+        data: data,
+      );
+
+      log('Notification sent successfully to driver $driverId');
+    } catch (e) {
+      log('Error sending notification to driver: $e');
+      throw Exception('Failed to send notification to driver: $e');
+    }
+  }
+
   /// Queue push notification for later delivery
   Future<void> _queuePushNotification({
     required String recipientId,

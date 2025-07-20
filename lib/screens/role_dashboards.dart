@@ -1,4 +1,4 @@
-// lib/screens/updated_role_dashboards.dart
+// lib/screens/role_dashboards.dart
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -15,7 +15,19 @@ class HospitalAdminDashboard extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    return const HospitalDashboard();
+    return const HospitalDashboardScreen(); // Fixed: Use correct class name
+  }
+}
+
+// Alias for backward compatibility
+class HospitalDashboard extends ConsumerWidget {
+  final String? hospitalId;
+
+  const HospitalDashboard({Key? key, this.hospitalId}) : super(key: key);
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    return const HospitalDashboardScreen(); // Fixed: Use correct class name
   }
 }
 
@@ -96,7 +108,7 @@ Widget _buildDashboard({
                 ),
                 const SizedBox(height: 8),
                 Text(
-                  'Access your ${_getRoleDisplayName(role).toLowerCase()} tools and manage operations',
+                  'Manage your ${role.name.toLowerCase()} responsibilities efficiently',
                   style: TextStyle(
                     fontSize: 16,
                     color: color.withOpacity(0.8),
@@ -105,36 +117,23 @@ Widget _buildDashboard({
               ],
             ),
           ),
+
           const SizedBox(height: 24),
 
           // Features grid
-          Text(
-            'Quick Actions',
-            style: TextStyle(
-              fontSize: 20,
-              fontWeight: FontWeight.bold,
-              color: Colors.grey.shade800,
-            ),
-          ),
-          const SizedBox(height: 16),
           GridView.builder(
             shrinkWrap: true,
             physics: const NeverScrollableScrollPhysics(),
             gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
               crossAxisCount: 2,
-              crossAxisSpacing: 12,
-              mainAxisSpacing: 12,
               childAspectRatio: 1.2,
+              crossAxisSpacing: 16,
+              mainAxisSpacing: 16,
             ),
             itemCount: features.length,
             itemBuilder: (context, index) {
               final feature = features[index];
-              return _buildFeatureCard(
-                context: context,
-                ref: ref,
-                feature: feature,
-                color: color,
-              );
+              return _buildFeatureCard(feature, color);
             },
           ),
         ],
@@ -143,42 +142,21 @@ Widget _buildDashboard({
   );
 }
 
-Widget _buildFeatureCard({
-  required BuildContext context,
-  required WidgetRef ref,
-  required DashboardFeature feature,
-  required Color color,
-}) {
+Widget _buildFeatureCard(DashboardFeature feature, Color themeColor) {
   return Card(
-    elevation: 3,
-    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+    elevation: 2,
     child: InkWell(
-      borderRadius: BorderRadius.circular(12),
-      onTap: () => feature.onTap(context, ref),
-      child: Container(
+      onTap: feature.onTap,
+      borderRadius: BorderRadius.circular(8),
+      child: Padding(
         padding: const EdgeInsets.all(16),
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(12),
-          gradient: LinearGradient(
-            colors: [color.withOpacity(0.1), color.withOpacity(0.05)],
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-          ),
-        ),
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Container(
-              padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                color: color.withOpacity(0.2),
-                borderRadius: BorderRadius.circular(12),
-              ),
-              child: Icon(
-                feature.icon,
-                size: 32,
-                color: color,
-              ),
+            Icon(
+              feature.icon,
+              size: 48,
+              color: themeColor,
             ),
             const SizedBox(height: 12),
             Text(
@@ -186,16 +164,16 @@ Widget _buildFeatureCard({
               style: TextStyle(
                 fontSize: 16,
                 fontWeight: FontWeight.bold,
-                color: color,
+                color: themeColor,
               ),
               textAlign: TextAlign.center,
             ),
             const SizedBox(height: 4),
             Text(
-              feature.subtitle,
-              style: TextStyle(
+              feature.description,
+              style: const TextStyle(
                 fontSize: 12,
-                color: color.withOpacity(0.7),
+                color: Colors.grey,
               ),
               textAlign: TextAlign.center,
               maxLines: 2,
@@ -211,69 +189,44 @@ Widget _buildFeatureCard({
 void _showLogoutDialog(BuildContext context, WidgetRef ref) {
   showDialog(
     context: context,
-    builder: (BuildContext context) {
-      return AlertDialog(
-        title: const Text('Logout'),
-        content: const Text('Are you sure you want to logout?'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(),
-            child: const Text('Cancel'),
-          ),
-          ElevatedButton(
-            onPressed: () async {
-              Navigator.of(context).pop();
-              await ref.read(authServiceProvider).signOut();
-              if (context.mounted) {
-                Navigator.of(context).pushAndRemoveUntil(
-                  MaterialPageRoute(builder: (context) => const LoginScreen()),
-                  (route) => false,
-                );
-              }
-            },
-            style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
-            child: const Text('Logout', style: TextStyle(color: Colors.white)),
-          ),
-        ],
-      );
-    },
-  );
-}
-
-void _showComingSoon(BuildContext context, String featureName) {
-  ScaffoldMessenger.of(context).showSnackBar(
-    SnackBar(
-      content: Text('$featureName feature coming soon!'),
-      backgroundColor: Colors.blue,
-      behavior: SnackBarBehavior.floating,
+    builder: (context) => AlertDialog(
+      title: const Text('Sign Out'),
+      content: const Text('Are you sure you want to sign out?'),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('Cancel'),
+        ),
+        ElevatedButton(
+          onPressed: () async {
+            final authService = ref.read(authServiceProvider);
+            await authService.signOut();
+            if (context.mounted) {
+              Navigator.of(context).pushAndRemoveUntil(
+                MaterialPageRoute(builder: (context) => const LoginScreen()),
+                (route) => false,
+              );
+            }
+          },
+          style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
+          child: const Text('Sign Out', style: TextStyle(color: Colors.white)),
+        ),
+      ],
     ),
   );
 }
 
+// Dashboard feature model
 class DashboardFeature {
-  final IconData icon;
   final String title;
-  final String subtitle;
-  final Function(BuildContext context, WidgetRef ref) onTap;
+  final String description;
+  final IconData icon;
+  final VoidCallback onTap;
 
   DashboardFeature({
-    required this.icon,
     required this.title,
-    required this.subtitle,
+    required this.description,
+    required this.icon,
     required this.onTap,
   });
-}
-
-// Helper function to get role display name
-String _getRoleDisplayName(UserRole role) {
-  switch (role) {
-    case UserRole.hospitalAdmin:
-      return 'Hospital Admin';
-    case UserRole.hospitalStaff:
-      return 'Hospital Staff';
-    case UserRole.ambulanceDriver:
-      return 'Ambulance Driver';
-    case UserRole.police:
-      return 'Police Officer';
-  }
 }

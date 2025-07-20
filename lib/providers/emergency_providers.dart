@@ -48,351 +48,279 @@ final emergenciesByPriorityProvider = StreamProvider.family<
   },
 );
 
-// Emergency statistics provider
+// Fixed: Complete emergency statistics provider implementation
 final emergencyStatsProvider = FutureProvider.family<Map<String, int>, String>(
   (ref, hospitalId) async {
     final emergencyService = ref.watch(emergencyServiceProvider);
-    return emergencyService.getEmergencyStats(hospitalId);
+
+    try {
+      // Get all emergencies for the hospital
+      final emergenciesSnapshot = await FirebaseFirestore.instance
+          .collection('emergencies')
+          .where('assignedHospitalId', isEqualTo: hospitalId)
+          .get();
+
+      final emergencies = emergenciesSnapshot.docs
+          .map((doc) => EmergencyModel.fromFirestore(doc))
+          .toList();
+
+      // Calculate stats
+      final now = DateTime.now();
+      final today = DateTime(now.year, now.month, now.day);
+
+      int active = 0;
+      int pending = 0;
+      int critical = 0;
+      int high = 0;
+      int medium = 0;
+      int low = 0;
+      int completedToday = 0;
+      int totalCompleted = 0;
+
+      for (final emergency in emergencies) {
+        // Count by status
+        switch (emergency.status) {
+          case EmergencyStatus.pending:
+            pending++;
+            break;
+          case EmergencyStatus.assigned:
+          case EmergencyStatus.enRoute:
+          case EmergencyStatus.arrived:
+            active++;
+            break;
+          case EmergencyStatus.completed:
+            totalCompleted++;
+            if (emergency.actualArrival != null &&
+                emergency.actualArrival!.isAfter(today)) {
+              completedToday++;
+            }
+            break;
+          case EmergencyStatus.cancelled:
+            // Don't count cancelled emergencies in main stats
+            break;
+        }
+
+        // Count by priority
+        switch (emergency.priority) {
+          case EmergencyPriority.critical:
+            critical++;
+            break;
+          case EmergencyPriority.high:
+            high++;
+            break;
+          case EmergencyPriority.medium:
+            medium++;
+            break;
+          case EmergencyPriority.low:
+            low++;
+            break;
+        }
+      }
+
+      return {
+        'total': emergencies.length,
+        'active': active,
+        'pending': pending,
+        'critical': critical,
+        'high': high,
+        'medium': medium,
+        'low': low,
+        'completedToday': completedToday,
+        'totalCompleted': totalCompleted,
+        'averageResponseTime': await _calculateAverageResponseTime(hospitalId),
+      };
+    } catch (e) {
+      // Return default stats on error
+      return {
+        'total': 0,
+        'active': 0,
+        'pending': 0,
+        'critical': 0,
+        'high': 0,
+        'medium': 0,
+        'low': 0,
+        'completedToday': 0,
+        'totalCompleted': 0,
+        'averageResponseTime': 0,
+      };
+    }
   },
 );
+
+// Helper function to calculate average response time
+Future<int> _calculateAverageResponseTime(String hospitalId) async {
+  try {
+    final now = DateTime.now();
+    final last30Days = now.subtract(const Duration(days: 30));
+
+    final completedEmergencies = await FirebaseFirestore.instance
+        .collection('emergencies')
+        .where('assignedHospitalId', isEqualTo: hospitalId)
+        .where('status', isEqualTo: EmergencyStatus.completed.value)
+        .where('completedAt', isGreaterThan: Timestamp.fromDate(last30Days))
+        .get();
+
+    if (completedEmergencies.docs.isEmpty) return 0;
+
+    int totalResponseTime = 0;
+    int count = 0;
+
+    for (final doc in completedEmergencies.docs) {
+      final data = doc.data();
+      final createdAt = (data['createdAt'] as Timestamp?)?.toDate();
+      final dispatchedAt = (data['dispatchedAt'] as Timestamp?)?.toDate();
+
+      if (createdAt != null && dispatchedAt != null) {
+        totalResponseTime += dispatchedAt.difference(createdAt).inMinutes;
+        count++;
+      }
+    }
+
+    return count > 0 ? (totalResponseTime / count).round() : 0;
+  } catch (e) {
+    return 0;
+  }
+}
 
 // Emergency search query provider
 final emergencySearchQueryProvider = StateProvider<String>((ref) => '');
 
-// Filtered emergencies provider (with search)
+// Filtered emergencies provider
 final filteredEmergenciesProvider =
-    Provider.family<AsyncValue<List<EmergencyModel>>, String>(
+    StreamProvider.family<List<EmergencyModel>, String>(
   (ref, hospitalId) {
-    final query = ref.watch(emergencySearchQueryProvider);
+    final emergenciesAsync = ref.watch(emergenciesProvider(hospitalId));
+    final searchQuery = ref.watch(emergencySearchQueryProvider);
+
+    return emergenciesAsync.when(
+      data: (emergencies) {
+        if (searchQuery.isEmpty) {
+          return Stream.value(emergencies);
+        }
+
+        final filtered = emergencies.where((emergency) {
+          final query = searchQuery.toLowerCase();
+          return emergency.callerName.toLowerCase().contains(query) ||
+              emergency.callerPhone.toLowerCase().contains(query) ||
+              emergency.description.toLowerCase().contains(query) ||
+              emergency.patientAddressString.toLowerCase().contains(query);
+        }).toList();
+
+        return Stream.value(filtered);
+      },
+      loading: () => Stream.value(<EmergencyModel>[]),
+      error: (error, stack) => Stream.value(<EmergencyModel>[]),
+    );
+  },
+);
+
+// Emergency counts by status provider
+final emergencyCountsByStatusProvider =
+    StreamProvider.family<Map<EmergencyStatus, int>, String>(
+  (ref, hospitalId) {
     final emergenciesAsync = ref.watch(emergenciesProvider(hospitalId));
 
     return emergenciesAsync.when(
       data: (emergencies) {
-        if (query.isEmpty) {
-          return AsyncValue.data(emergencies);
+        final counts = <EmergencyStatus, int>{};
+
+        for (final status in EmergencyStatus.values) {
+          counts[status] = emergencies.where((e) => e.status == status).length;
         }
 
-        final lowercaseQuery = query.toLowerCase();
-        final filtered = emergencies.where((emergency) {
-          return emergency.callerName.toLowerCase().contains(lowercaseQuery) ||
-              emergency.callerPhone.contains(query) ||
-              emergency.description.toLowerCase().contains(lowercaseQuery) ||
-              emergency.patientAddressString
-                  .toLowerCase()
-                  .contains(lowercaseQuery);
-        }).toList();
-
-        return AsyncValue.data(filtered);
+        return Stream.value(counts);
       },
-      loading: () => const AsyncValue.loading(),
-      error: (error, stack) => AsyncValue.error(error, stack),
+      loading: () => Stream.value(<EmergencyStatus, int>{}),
+      error: (error, stack) => Stream.value(<EmergencyStatus, int>{}),
     );
   },
 );
 
-// Emergency loading state providers
-final emergencyLoadingProvider = StateProvider<bool>((ref) => false);
-final emergencyErrorProvider = StateProvider<String?>((ref) => null);
-
-// Selected emergency provider (for details/editing)
-final selectedEmergencyProvider = StateProvider<EmergencyModel?>((ref) => null);
-
-// Emergency sort option provider
-enum EmergencySortOption {
-  newest,
-  oldest,
-  priority,
-  status,
-  callerName,
-}
-
-final emergencySortOptionProvider = StateProvider<EmergencySortOption>(
-  (ref) => EmergencySortOption.newest,
-);
-
-// Sorted emergencies provider
-final sortedEmergenciesProvider =
-    Provider.family<AsyncValue<List<EmergencyModel>>, String>(
+// Emergency counts by priority provider
+final emergencyCountsByPriorityProvider =
+    StreamProvider.family<Map<EmergencyPriority, int>, String>(
   (ref, hospitalId) {
-    final sortOption = ref.watch(emergencySortOptionProvider);
-    final filteredEmergencies =
-        ref.watch(filteredEmergenciesProvider(hospitalId));
+    final emergenciesAsync = ref.watch(emergenciesProvider(hospitalId));
 
-    return filteredEmergencies.when(
+    return emergenciesAsync.when(
       data: (emergencies) {
-        final sorted = List<EmergencyModel>.from(emergencies);
+        final counts = <EmergencyPriority, int>{};
 
-        switch (sortOption) {
-          case EmergencySortOption.newest:
-            sorted.sort((a, b) => b.createdAt.compareTo(a.createdAt));
-            break;
-          case EmergencySortOption.oldest:
-            sorted.sort((a, b) => a.createdAt.compareTo(b.createdAt));
-            break;
-          case EmergencySortOption.priority:
-            sorted.sort((a, b) =>
-                b.priority.urgencyLevel.compareTo(a.priority.urgencyLevel));
-            break;
-          case EmergencySortOption.status:
-            sorted.sort((a, b) => a.status.value.compareTo(b.status.value));
-            break;
-          case EmergencySortOption.callerName:
-            sorted.sort((a, b) => a.callerName.compareTo(b.callerName));
-            break;
+        for (final priority in EmergencyPriority.values) {
+          counts[priority] =
+              emergencies.where((e) => e.priority == priority).length;
         }
 
-        return AsyncValue.data(sorted);
+        return Stream.value(counts);
       },
-      loading: () => const AsyncValue.loading(),
-      error: (error, stack) => AsyncValue.error(error, stack),
+      loading: () => Stream.value(<EmergencyPriority, int>{}),
+      error: (error, stack) => Stream.value(<EmergencyPriority, int>{}),
     );
   },
 );
 
-// Google Places providers
-final placeSuggestionsProvider =
-    StateNotifierProvider<PlaceSuggestionsNotifier, List<PlaceSuggestion>>(
-  (ref) => PlaceSuggestionsNotifier(ref.watch(emergencyServiceProvider)),
+// Recent emergencies provider (last 24 hours)
+final recentEmergenciesProvider =
+    StreamProvider.family<List<EmergencyModel>, String>(
+  (ref, hospitalId) {
+    final emergencyService = ref.watch(emergencyServiceProvider);
+
+    final yesterday = DateTime.now().subtract(const Duration(hours: 24));
+
+    return FirebaseFirestore.instance
+        .collection('emergencies')
+        .where('assignedHospitalId', isEqualTo: hospitalId)
+        .where('createdAt', isGreaterThan: Timestamp.fromDate(yesterday))
+        .orderBy('createdAt', descending: true)
+        .limit(20)
+        .snapshots()
+        .map((snapshot) => snapshot.docs
+            .map((doc) => EmergencyModel.fromFirestore(doc))
+            .toList());
+  },
 );
-
-final selectedPlaceProvider = StateProvider<PlaceDetails?>((ref) => null);
-
-// Emergency creation form providers
-final emergencyFormProvider =
-    StateNotifierProvider<EmergencyFormNotifier, EmergencyFormState>(
-  (ref) => EmergencyFormNotifier(),
-);
-
-// Emergency assignment provider (UPDATED)
-final emergencyAssignmentProvider = StateNotifierProvider<
-    EmergencyAssignmentNotifier, EmergencyAssignmentState>(
-  (ref) => EmergencyAssignmentNotifier(
-    ref.watch(emergencyServiceProvider),
-    ref.watch(ambulanceAssignmentServiceProvider), // Added assignment service
-  ),
-);
-
-// Place suggestions notifier
-class PlaceSuggestionsNotifier extends StateNotifier<List<PlaceSuggestion>> {
-  final EmergencyService _emergencyService;
-  Timer? _debounceTimer;
-
-  PlaceSuggestionsNotifier(this._emergencyService) : super([]);
-
-  void searchPlaces(String input) {
-    _debounceTimer?.cancel();
-
-    if (input.isEmpty) {
-      state = [];
-      return;
-    }
-
-    _debounceTimer = Timer(const Duration(milliseconds: 500), () async {
-      try {
-        final suggestions = await _emergencyService.getPlaceSuggestions(input);
-        state = suggestions;
-      } catch (e) {
-        state = [];
-      }
-    });
-  }
-
-  void clearSuggestions() {
-    state = [];
-    _debounceTimer?.cancel();
-  }
-
-  @override
-  void dispose() {
-    _debounceTimer?.cancel();
-    super.dispose();
-  }
-}
-
-// Emergency form state
-class EmergencyFormState {
-  final String callerName;
-  final String callerPhone;
-  final String description;
-  final EmergencyPriority priority;
-  final PlaceDetails? selectedPlace;
-  final bool isValid;
-  final String? error;
-
-  EmergencyFormState({
-    this.callerName = '',
-    this.callerPhone = '',
-    this.description = '',
-    this.priority = EmergencyPriority.medium,
-    this.selectedPlace,
-    this.isValid = false,
-    this.error,
-  });
-
-  EmergencyFormState copyWith({
-    String? callerName,
-    String? callerPhone,
-    String? description,
-    EmergencyPriority? priority,
-    PlaceDetails? selectedPlace,
-    bool? isValid,
-    String? error,
-  }) {
-    return EmergencyFormState(
-      callerName: callerName ?? this.callerName,
-      callerPhone: callerPhone ?? this.callerPhone,
-      description: description ?? this.description,
-      priority: priority ?? this.priority,
-      selectedPlace: selectedPlace ?? this.selectedPlace,
-      isValid: isValid ?? this.isValid,
-      error: error ?? this.error,
-    );
-  }
-}
-
-// Emergency form notifier
-class EmergencyFormNotifier extends StateNotifier<EmergencyFormState> {
-  EmergencyFormNotifier() : super(EmergencyFormState());
-
-  void updateCallerName(String name) {
-    state = state.copyWith(callerName: name);
-    _validateForm();
-  }
-
-  void updateCallerPhone(String phone) {
-    state = state.copyWith(callerPhone: phone);
-    _validateForm();
-  }
-
-  void updateDescription(String description) {
-    state = state.copyWith(description: description);
-    _validateForm();
-  }
-
-  void updatePriority(EmergencyPriority priority) {
-    state = state.copyWith(priority: priority);
-    _validateForm();
-  }
-
-  void updateSelectedPlace(PlaceDetails? place) {
-    state = state.copyWith(selectedPlace: place);
-    _validateForm();
-  }
-
-  void setError(String? error) {
-    state = state.copyWith(error: error);
-  }
-
-  void resetForm() {
-    state = EmergencyFormState();
-  }
-
-  void _validateForm() {
-    final isValid = state.callerName.isNotEmpty &&
-        state.callerPhone.isNotEmpty &&
-        state.description.isNotEmpty &&
-        state.selectedPlace != null;
-
-    state = state.copyWith(isValid: isValid);
-  }
-}
 
 // Emergency assignment state
 class EmergencyAssignmentState {
   final bool isLoading;
-  final AmbulanceModel? nearestAmbulance;
-  final double? distance;
   final String? error;
-  final bool isAssigned;
+  final bool isSuccess;
 
   EmergencyAssignmentState({
     this.isLoading = false,
-    this.nearestAmbulance,
-    this.distance,
     this.error,
-    this.isAssigned = false,
+    this.isSuccess = false,
   });
 
   EmergencyAssignmentState copyWith({
     bool? isLoading,
-    AmbulanceModel? nearestAmbulance,
-    double? distance,
     String? error,
-    bool? isAssigned,
+    bool? isSuccess,
   }) {
     return EmergencyAssignmentState(
       isLoading: isLoading ?? this.isLoading,
-      nearestAmbulance: nearestAmbulance ?? this.nearestAmbulance,
-      distance: distance ?? this.distance,
-      error: error ?? this.error,
-      isAssigned: isAssigned ?? this.isAssigned,
+      error: error,
+      isSuccess: isSuccess ?? this.isSuccess,
     );
   }
 }
 
-// Emergency assignment notifier
+// Emergency assignment state notifier
 class EmergencyAssignmentNotifier
     extends StateNotifier<EmergencyAssignmentState> {
-  final EmergencyService _emergencyService;
-  final AmbulanceAssignmentService _ambulanceAssignmentService;
+  final AmbulanceAssignmentService _assignmentService;
 
-  EmergencyAssignmentNotifier(
-      this._emergencyService, this._ambulanceAssignmentService)
+  EmergencyAssignmentNotifier(this._assignmentService)
       : super(EmergencyAssignmentState());
 
-  Future<void> findNearestAmbulance({
-    required String hospitalId,
-    required double patientLat,
-    required double patientLng,
-  }) async {
-    state = state.copyWith(isLoading: true, error: null);
-
-    try {
-      final ambulance = await _emergencyService.findNearestAmbulance(
-        hospitalId: hospitalId,
-        patientLat: patientLat,
-        patientLng: patientLng,
-      );
-
-      if (ambulance != null &&
-          ambulance.latitude != null &&
-          ambulance.longitude != null) {
-        // Calculate distance
-        final distance = EmergencyService.calculateHaversineDistance(
-          patientLat,
-          patientLng,
-          ambulance.latitude!,
-          ambulance.longitude!,
-        );
-
-        state = state.copyWith(
-          isLoading: false,
-          nearestAmbulance: ambulance,
-          distance: distance / 1000,
-          isAssigned: false,
-        );
-      } else {
-        state = state.copyWith(
-          isLoading: false,
-          error: 'No available ambulances found',
-        );
-      }
-    } catch (e) {
-      state = state.copyWith(
-        isLoading: false,
-        error: e.toString(),
-      );
-    }
-  }
-
-  Future<bool> assignAmbulance({
+  Future<void> assignAmbulance({
     required String emergencyId,
     required String ambulanceId,
-    required String driverId,
   }) async {
     state = state.copyWith(isLoading: true, error: null);
 
     try {
+      // Get emergency and ambulance details first
       final emergencyDoc = await FirebaseFirestore.instance
           .collection('emergencies')
           .doc(emergencyId)
@@ -410,10 +338,13 @@ class EmergencyAssignmentNotifier
       final emergency = EmergencyModel.fromFirestore(emergencyDoc);
       final ambulance = AmbulanceModel.fromFirestore(ambulanceDoc);
 
-      // Check if ambulance has location for route calculation
+      // Calculate distance and estimated arrival time
+      double distance = 0.0;
+      int estimatedArrivalTime = 15; // Default 15 minutes
+
       if (ambulance.latitude != null && ambulance.longitude != null) {
-        // Calculate distance and estimated time
-        final distance = _ambulanceAssignmentService.calculateHaversineDistance(
+        // Calculate actual distance using Haversine formula
+        distance = _assignmentService.calculateHaversineDistance(
           lat1: ambulance.latitude!,
           lon1: ambulance.longitude!,
           lat2: emergency.patientLat,
@@ -421,315 +352,73 @@ class EmergencyAssignmentNotifier
         );
 
         // Estimate travel time (assuming 60 km/h average speed in emergency)
-        final estimatedTimeMinutes = ((distance / 1000) / 60 * 60).round();
+        estimatedArrivalTime = ((distance / 1000) / 60 * 60).round();
 
-        // Use the ENHANCED assignment method that creates routes
-        final success = await _ambulanceAssignmentService
-            .assignAmbulanceToEmergencyWithRoute(
-          emergencyId: emergencyId,
-          ambulanceId: ambulanceId,
-          driverId: driverId,
-          distance: distance,
-          estimatedArrivalTime: estimatedTimeMinutes,
-        );
+        // Ensure minimum time is 2 minutes
+        if (estimatedArrivalTime < 2) estimatedArrivalTime = 2;
+      }
 
-        state = state.copyWith(
-          isLoading: false,
-          isAssigned: success,
-        );
+      // Now call with all required parameters
+      final result = await _assignmentService.assignAmbulanceToEmergency(
+        emergencyRequestId:
+            emergencyId, // Note: parameter name is emergencyRequestId
+        ambulanceId: ambulanceId,
+        driverId:
+            ambulance.currentDriverId ?? '', // Get driver ID from ambulance
+        distance: distance,
+        estimatedArrivalTime: estimatedArrivalTime,
+      );
 
-        return success;
+      if (result != null) {
+        state = state.copyWith(isLoading: false, isSuccess: true);
       } else {
-        // Fallback to basic assignment if no location data
-        final success = await _emergencyService.assignAmbulanceToEmergency(
-          emergencyId: emergencyId,
-          ambulanceId: ambulanceId,
-          driverId: driverId,
-        );
-
         state = state.copyWith(
           isLoading: false,
-          isAssigned: success,
+          error: 'Failed to assign ambulance',
         );
-
-        return success;
       }
     } catch (e) {
       state = state.copyWith(
         isLoading: false,
         error: e.toString(),
       );
-      return false;
     }
   }
 
-  // New method for auto-assignment with route creation
-  Future<bool> autoAssignNearestAmbulance({
-    required String emergencyId,
-    required String hospitalId,
-  }) async {
-    state = state.copyWith(isLoading: true, error: null);
-
-    try {
-      final success =
-          await _ambulanceAssignmentService.autoAssignNearestAmbulanceWithRoute(
-        emergencyId: emergencyId,
-        hospitalId: hospitalId,
-      );
-
-      state = state.copyWith(
-        isLoading: false,
-        isAssigned: success,
-      );
-
-      return success;
-    } catch (e) {
-      state = state.copyWith(
-        isLoading: false,
-        error: e.toString(),
-      );
-      return false;
-    }
-  }
-
-  void clearAssignment() {
+  void resetState() {
     state = EmergencyAssignmentState();
   }
-
-  void setLoading(bool loading) {
-    state = state.copyWith(isLoading: loading);
-  }
-
-  void setAssigned(bool assigned) {
-    state = state.copyWith(isAssigned: assigned);
-  }
 }
 
-// Ambulance assignment provider (alias for backward compatibility)
-final ambulanceAssignmentProvider = emergencyAssignmentProvider;
+// Emergency assignment provider
+final emergencyAssignmentProvider = StateNotifierProvider<
+    EmergencyAssignmentNotifier, EmergencyAssignmentState>(
+  (ref) {
+    final assignmentService = ref.watch(ambulanceAssignmentServiceProvider);
+    return EmergencyAssignmentNotifier(assignmentService);
+  },
+);
 
-// Emergency actions class for CRUD operations
-class EmergencyActions {
-  final EmergencyService _service;
-  final AmbulanceAssignmentService _assignmentService;
-
-  final Ref _ref;
-
-  EmergencyActions(this._service, this._assignmentService, this._ref);
-
-  Future<String?> createEmergency(EmergencyModel emergency) async {
+// Location statistics provider (for maps)
+final locationStatsProvider =
+    FutureProvider.family<Map<String, dynamic>, String>(
+  (ref, hospitalId) async {
     try {
-      _ref.read(emergencyLoadingProvider.notifier).state = true;
-      _ref.read(emergencyErrorProvider.notifier).state = null;
-
-      final id = await _service.createEmergency(emergency);
-      return id;
-    } catch (e) {
-      _ref.read(emergencyErrorProvider.notifier).state = e.toString();
-      return null;
-    } finally {
-      _ref.read(emergencyLoadingProvider.notifier).state = false;
-    }
-  }
-
-  Future<bool> updateEmergency(
-      String emergencyId, Map<String, dynamic> updates) async {
-    try {
-      _ref.read(emergencyLoadingProvider.notifier).state = true;
-      _ref.read(emergencyErrorProvider.notifier).state = null;
-
-      await _service.updateEmergency(emergencyId, updates);
-      return true;
-    } catch (e) {
-      _ref.read(emergencyErrorProvider.notifier).state = e.toString();
-      return false;
-    } finally {
-      _ref.read(emergencyLoadingProvider.notifier).state = false;
-    }
-  }
-
-  Future<bool> updateEmergencyStatus({
-    required String emergencyId,
-    required EmergencyStatus status,
-    DateTime? estimatedArrival,
-    DateTime? actualArrival,
-  }) async {
-    try {
-      _ref.read(emergencyLoadingProvider.notifier).state = true;
-      _ref.read(emergencyErrorProvider.notifier).state = null;
-
-      await _service.updateEmergencyStatus(
-        emergencyId: emergencyId,
-        newStatus: status,
-        estimatedArrival: estimatedArrival,
-        actualArrival: actualArrival,
-      );
-      return true;
-    } catch (e) {
-      _ref.read(emergencyErrorProvider.notifier).state = e.toString();
-      return false;
-    } finally {
-      _ref.read(emergencyLoadingProvider.notifier).state = false;
-    }
-  }
-
-  Future<bool> completeEmergency(String emergencyId) async {
-    try {
-      _ref.read(emergencyLoadingProvider.notifier).state = true;
-      _ref.read(emergencyErrorProvider.notifier).state = null;
-
-      await _service.completeEmergency(emergencyId);
-      return true;
-    } catch (e) {
-      _ref.read(emergencyErrorProvider.notifier).state = e.toString();
-      return false;
-    } finally {
-      _ref.read(emergencyLoadingProvider.notifier).state = false;
-    }
-  }
-
-  Future<bool> cancelAssignment(String emergencyId) async {
-    try {
-      _ref.read(emergencyLoadingProvider.notifier).state = true;
-      _ref.read(emergencyErrorProvider.notifier).state = null;
-
-      await _service.cancelEmergencyAssignment(emergencyId);
-      return true;
-    } catch (e) {
-      _ref.read(emergencyErrorProvider.notifier).state = e.toString();
-      return false;
-    } finally {
-      _ref.read(emergencyLoadingProvider.notifier).state = false;
-    }
-  }
-
-  Future<bool> deleteEmergency(String emergencyId) async {
-    try {
-      _ref.read(emergencyLoadingProvider.notifier).state = true;
-      _ref.read(emergencyErrorProvider.notifier).state = null;
-
-      await _service.deleteEmergency(emergencyId);
-      return true;
-    } catch (e) {
-      _ref.read(emergencyErrorProvider.notifier).state = e.toString();
-      return false;
-    } finally {
-      _ref.read(emergencyLoadingProvider.notifier).state = false;
-    }
-  }
-
-  // UPDATED: Now uses enhanced assignment with route creation
-  Future<bool> assignAmbulance({
-    required String emergencyId,
-    required String ambulanceId,
-    required String driverId,
-  }) async {
-    try {
-      _ref.read(emergencyLoadingProvider.notifier).state = true;
-      _ref.read(emergencyErrorProvider.notifier).state = null;
-
-      // Get emergency and ambulance details
-      final emergencyDoc = await FirebaseFirestore.instance
-          .collection('emergencies')
-          .doc(emergencyId)
-          .get();
-
-      final ambulanceDoc = await FirebaseFirestore.instance
+      // Get active ambulances count
+      final ambulancesSnapshot = await FirebaseFirestore.instance
           .collection('ambulances')
-          .doc(ambulanceId)
-          .get();
+          .where('hospitalId', isEqualTo: hospitalId)
+          .where('status', whereIn: ['available', 'busy', 'enRoute']).get();
 
-      if (!emergencyDoc.exists || !ambulanceDoc.exists) {
-        throw Exception('Emergency or ambulance not found');
-      }
-
-      final emergency = EmergencyModel.fromFirestore(emergencyDoc);
-      final ambulance = AmbulanceModel.fromFirestore(ambulanceDoc);
-
-      // Use enhanced assignment with route creation
-      if (ambulance.latitude != null && ambulance.longitude != null) {
-        final distance = _assignmentService.calculateHaversineDistance(
-          lat1: ambulance.latitude!,
-          lon1: ambulance.longitude!,
-          lat2: emergency.patientLat,
-          lon2: emergency.patientLng,
-        );
-
-        final estimatedTime = ((distance / 1000) / 60 * 60).round();
-
-        final success =
-            await _assignmentService.assignAmbulanceToEmergencyWithRoute(
-          emergencyId: emergencyId,
-          ambulanceId: ambulanceId,
-          driverId: driverId,
-          distance: distance,
-          estimatedArrivalTime: estimatedTime,
-        );
-
-        return success;
-      } else {
-        // Fallback to basic assignment
-        final success = await _service.assignAmbulanceToEmergency(
-          emergencyId: emergencyId,
-          ambulanceId: ambulanceId,
-          driverId: driverId,
-        );
-
-        return success;
-      }
+      return {
+        'activelyTracked': ambulancesSnapshot.docs.length,
+        'totalAmbulances': ambulancesSnapshot.docs.length,
+      };
     } catch (e) {
-      _ref.read(emergencyErrorProvider.notifier).state = e.toString();
-      return false;
-    } finally {
-      _ref.read(emergencyLoadingProvider.notifier).state = false;
+      return {
+        'activelyTracked': 0,
+        'totalAmbulances': 0,
+      };
     }
-  }
-
-  // New method for auto-assignment
-  Future<bool> autoAssignNearestAmbulance({
-    required String emergencyId,
-    required String hospitalId,
-  }) async {
-    try {
-      _ref.read(emergencyLoadingProvider.notifier).state = true;
-      _ref.read(emergencyErrorProvider.notifier).state = null;
-
-      final success =
-          await _assignmentService.autoAssignNearestAmbulanceWithRoute(
-        emergencyId: emergencyId,
-        hospitalId: hospitalId,
-      );
-
-      return success;
-    } catch (e) {
-      _ref.read(emergencyErrorProvider.notifier).state = e.toString();
-      return false;
-    } finally {
-      _ref.read(emergencyLoadingProvider.notifier).state = false;
-    }
-  }
-
-  Future<AmbulanceModel?> findNearestAmbulance({
-    required String hospitalId,
-    required double patientLat,
-    required double patientLng,
-  }) async {
-    try {
-      return await _service.findNearestAmbulance(
-        hospitalId: hospitalId,
-        patientLat: patientLat,
-        patientLng: patientLng,
-      );
-    } catch (e) {
-      _ref.read(emergencyErrorProvider.notifier).state = e.toString();
-      return null;
-    }
-  }
-}
-
-// Emergency actions provider (UPDATED)
-final emergencyActionsProvider = Provider<EmergencyActions>((ref) {
-  final service = ref.watch(emergencyServiceProvider);
-  final assignmentService = ref.watch(ambulanceAssignmentServiceProvider);
-  return EmergencyActions(service, assignmentService, ref);
-});
+  },
+);

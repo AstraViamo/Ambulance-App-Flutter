@@ -551,7 +551,12 @@ class AmbulanceAssignmentService {
       try {
         final route = await _routeService.getRouteForEmergency(emergencyId);
         if (route != null) {
-          await _routeService.completeRoute(route.id);
+          await _routeService.completeRoute(
+            routeId: route.id,
+            completedBy: 'system', // or the actual user ID
+            completedByName: 'System', // or the actual user name
+            completionReason: 'Emergency completed',
+          );
         }
       } catch (routeError) {
         log('Error completing route: $routeError');

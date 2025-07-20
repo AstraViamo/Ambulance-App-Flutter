@@ -4,11 +4,19 @@ import 'dart:developer';
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../models/notification_model.dart';
 import '../services/notification_service.dart';
+import '../services/notification_settings_service.dart';
+import 'auth_provider.dart';
 
 // Notification service provider
 final notificationServiceProvider = Provider<NotificationService>((ref) {
   return NotificationService();
+});
+
+final notificationSettingsServiceProvider =
+    Provider<NotificationSettingsService>((ref) {
+  return NotificationSettingsService();
 });
 
 // Notifications stream provider for a specific user
@@ -313,79 +321,195 @@ class NotificationSettingsState {
 class NotificationSettingsNotifier
     extends StateNotifier<NotificationSettingsState> {
   final NotificationService _notificationService;
+  final NotificationSettingsService _settingsService;
+  String? _currentUserId;
 
-  NotificationSettingsNotifier(this._notificationService)
+  NotificationSettingsNotifier(this._notificationService, this._settingsService)
       : super(NotificationSettingsState());
 
-  /// Load notification settings
+  /// Load notification settings for a user
   Future<void> loadSettings(String userId) async {
+    if (_currentUserId == userId && !state.isLoading) {
+      return; // Already loaded for this user
+    }
+
     state = state.copyWith(isLoading: true, error: null);
+    _currentUserId = userId;
 
     try {
-      // Load settings from Firestore or SharedPreferences
-      // This is a placeholder - implement actual settings loading
-      await Future.delayed(const Duration(milliseconds: 500));
+      final settingsData = await _settingsService.loadSettings(userId);
 
-      state = state.copyWith(isLoading: false);
+      state = NotificationSettingsState(
+        emergencyNotifications: settingsData.emergencyNotifications,
+        routeNotifications: settingsData.routeNotifications,
+        generalNotifications: settingsData.generalNotifications,
+        soundEnabled: settingsData.soundEnabled,
+        vibrationEnabled: settingsData.vibrationEnabled,
+        notificationTone: settingsData.notificationTone,
+        isLoading: false,
+        error: null,
+      );
+
+      log('Notification settings loaded successfully for user $userId');
     } catch (e) {
       log('Error loading notification settings: $e');
-      state = state.copyWith(isLoading: false, error: e.toString());
+      state = state.copyWith(
+        isLoading: false,
+        error: 'Failed to load settings: ${e.toString()}',
+      );
     }
   }
 
   /// Update emergency notifications setting
-  void updateEmergencyNotifications(bool enabled) {
+  Future<void> updateEmergencyNotifications(bool enabled) async {
+    if (_currentUserId == null) return;
+
     state = state.copyWith(emergencyNotifications: enabled);
-    _saveSettings();
+    await _saveSettings();
   }
 
   /// Update route notifications setting
-  void updateRouteNotifications(bool enabled) {
+  Future<void> updateRouteNotifications(bool enabled) async {
+    if (_currentUserId == null) return;
+
     state = state.copyWith(routeNotifications: enabled);
-    _saveSettings();
+    await _saveSettings();
   }
 
   /// Update general notifications setting
-  void updateGeneralNotifications(bool enabled) {
+  Future<void> updateGeneralNotifications(bool enabled) async {
+    if (_currentUserId == null) return;
+
     state = state.copyWith(generalNotifications: enabled);
-    _saveSettings();
+    await _saveSettings();
   }
 
   /// Update sound setting
-  void updateSoundEnabled(bool enabled) {
+  Future<void> updateSoundEnabled(bool enabled) async {
+    if (_currentUserId == null) return;
+
     state = state.copyWith(soundEnabled: enabled);
-    _saveSettings();
+    await _saveSettings();
   }
 
   /// Update vibration setting
-  void updateVibrationEnabled(bool enabled) {
+  Future<void> updateVibrationEnabled(bool enabled) async {
+    if (_currentUserId == null) return;
+
     state = state.copyWith(vibrationEnabled: enabled);
-    _saveSettings();
+    await _saveSettings();
   }
 
   /// Update notification tone
-  void updateNotificationTone(String tone) {
+  Future<void> updateNotificationTone(String tone) async {
+    if (_currentUserId == null) return;
+
     state = state.copyWith(notificationTone: tone);
-    _saveSettings();
+    await _saveSettings();
   }
 
-  /// Save settings to storage
+  /// Save current settings to storage
   Future<void> _saveSettings() async {
+    if (_currentUserId == null) return;
+
     try {
-      // Save to Firestore or SharedPreferences
-      // This is a placeholder - implement actual settings saving
-      log('Notification settings saved');
+      final settingsData = NotificationSettingsData(
+        emergencyNotifications: state.emergencyNotifications,
+        routeNotifications: state.routeNotifications,
+        generalNotifications: state.generalNotifications,
+        soundEnabled: state.soundEnabled,
+        vibrationEnabled: state.vibrationEnabled,
+        notificationTone: state.notificationTone,
+        lastUpdated: DateTime.now(),
+      );
+
+      await _settingsService.saveSettings(_currentUserId!, settingsData);
+      log('Notification settings saved successfully');
+
+      // Clear any previous errors
+      if (state.error != null) {
+        state = state.copyWith(error: null);
+      }
     } catch (e) {
       log('Error saving notification settings: $e');
+      state = state.copyWith(error: 'Failed to save settings: ${e.toString()}');
     }
+  }
+
+  /// Reset settings to defaults
+  Future<void> resetToDefaults() async {
+    if (_currentUserId == null) return;
+
+    state = state.copyWith(isLoading: true, error: null);
+
+    try {
+      final defaultSettings = NotificationSettingsData.defaultSettings();
+      await _settingsService.saveSettings(_currentUserId!, defaultSettings);
+
+      state = NotificationSettingsState(
+        emergencyNotifications: defaultSettings.emergencyNotifications,
+        routeNotifications: defaultSettings.routeNotifications,
+        generalNotifications: defaultSettings.generalNotifications,
+        soundEnabled: defaultSettings.soundEnabled,
+        vibrationEnabled: defaultSettings.vibrationEnabled,
+        notificationTone: defaultSettings.notificationTone,
+        isLoading: false,
+        error: null,
+      );
+
+      log('Settings reset to defaults');
+    } catch (e) {
+      log('Error resetting settings: $e');
+      state = state.copyWith(
+        isLoading: false,
+        error: 'Failed to reset settings: ${e.toString()}',
+      );
+    }
+  }
+
+  /// Sync local settings to cloud (useful after offline changes)
+  Future<void> syncToCloud() async {
+    if (_currentUserId == null) return;
+
+    try {
+      await _settingsService.syncToFirestore(_currentUserId!);
+      log('Settings synced to cloud');
+    } catch (e) {
+      log('Error syncing settings to cloud: $e');
+    }
+  }
+
+  /// Check if user should receive a specific notification type
+  Future<bool> shouldReceiveNotification(String notificationType) async {
+    if (_currentUserId == null) return true;
+
+    return await _settingsService.shouldReceiveNotification(
+        _currentUserId!, notificationType);
   }
 }
 
 // Notification settings provider
 final notificationSettingsProvider = StateNotifierProvider<
     NotificationSettingsNotifier, NotificationSettingsState>(
-  (ref) => NotificationSettingsNotifier(ref.watch(notificationServiceProvider)),
+  (ref) => NotificationSettingsNotifier(
+    ref.watch(notificationServiceProvider),
+    ref.watch(notificationSettingsServiceProvider),
+  ),
 );
+
+final currentUserNotificationSettingsProvider =
+    FutureProvider<NotificationSettingsState>((ref) async {
+  final currentUser = await ref.watch(currentUserProvider.future);
+  if (currentUser == null) {
+    return NotificationSettingsState(); // Default state
+  }
+
+  // Load settings for current user
+  final notifier = ref.read(notificationSettingsProvider.notifier);
+  await notifier.loadSettings(currentUser.id);
+
+  return ref.read(notificationSettingsProvider);
+});
 
 // Notification filter model
 class NotificationFilter {

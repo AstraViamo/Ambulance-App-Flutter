@@ -9,7 +9,9 @@ import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:http/http.dart' as http;
 
 import '../models/emergency_model.dart';
+import '../models/notification_model.dart';
 import '../models/route_model.dart';
+import '../services/notification_settings_service.dart';
 
 class NotificationService {
   static final NotificationService _instance = NotificationService._internal();
@@ -20,6 +22,8 @@ class NotificationService {
   final FlutterLocalNotificationsPlugin _localNotifications =
       FlutterLocalNotificationsPlugin();
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
+  final NotificationSettingsService _settingsService =
+      NotificationSettingsService();
 
   bool _isInitialized = false;
 
@@ -250,7 +254,7 @@ class NotificationService {
   }
 
   /// Create in-app notification in Firestore
-  Future<bool> _createInAppNotification({
+  Future<String> _createInAppNotification({
     required String recipientId,
     required String type,
     required String title,
@@ -259,21 +263,166 @@ class NotificationService {
     required String priority,
   }) async {
     try {
-      await _firestore.collection('notifications').add({
-        'type': type,
-        'title': title,
-        'message': message,
-        'recipientId': recipientId,
-        'priority': priority,
-        'isRead': false,
-        'createdAt': FieldValue.serverTimestamp(),
-        'data': data,
-      });
+      final notification = NotificationModel(
+        id: '', // Will be set by Firestore
+        userId: recipientId,
+        type: type,
+        priority: priority,
+        title: title,
+        message: message,
+        data: data,
+        isRead: false,
+        createdAt: DateTime.now(),
+      );
 
-      return true;
+      final docRef = await _firestore
+          .collection('notifications')
+          .add(notification.toFirestore());
+
+      log('In-app notification created with ID: ${docRef.id}');
+      return docRef.id;
     } catch (e) {
       log('Error creating in-app notification: $e');
+      throw Exception('Failed to create notification: $e');
+    }
+  }
+
+  /// Send push notification with fallback to in-app notification
+  Future<bool> sendPushNotification({
+    required String userId,
+    required String title,
+    required String message,
+    required Map<String, dynamic> data,
+    String priority = 'normal',
+    bool ignoreSettings = false,
+  }) async {
+    try {
+      final notificationType = data['type'] ?? 'general';
+
+      // Check if user wants to receive this type of notification
+      if (!ignoreSettings) {
+        final shouldReceive = await _settingsService.shouldReceiveNotification(
+            userId, notificationType);
+        if (!shouldReceive) {
+          log('Notification blocked by user settings: $notificationType for user $userId');
+          return false;
+        }
+      }
+
+      // Get user's notification preferences for sound/vibration
+      final preferences =
+          await _settingsService.getNotificationPreferences(userId);
+
+      // Update data with user preferences
+      final enhancedData = {
+        ...data,
+        'soundEnabled': preferences.soundEnabled,
+        'vibrationEnabled': preferences.vibrationEnabled,
+        'notificationTone': preferences.notificationTone,
+      };
+
+      // Try cloud function first
+      bool pushSuccess = await sendNotificationViaCloudFunction(
+        recipientId: userId,
+        title: title,
+        message: message,
+        data: enhancedData,
+        priority: priority,
+      );
+
+      // Always create in-app notification
+      await _createInAppNotification(
+        recipientId: userId,
+        type: notificationType,
+        title: title,
+        message: message,
+        data: enhancedData,
+        priority: priority,
+      );
+
+      // Show local notification if app is in foreground
+      if (_isAppInForeground) {
+        await _showLocalNotificationWithPreferences(
+          title: title,
+          body: message,
+          type: notificationType,
+          preferences: preferences,
+          data: enhancedData,
+        );
+      }
+
+      return pushSuccess;
+    } catch (e) {
+      log('Error in sendPushNotification: $e');
       return false;
+    }
+  }
+
+  Future<void> _showLocalNotificationWithPreferences({
+    required String title,
+    required String body,
+    required String type,
+    required NotificationPreferences preferences,
+    Map<String, dynamic>? data,
+  }) async {
+    try {
+      // Determine the channel based on type
+      String channelId;
+      switch (type) {
+        case 'emergency_assignment':
+          channelId = 'emergency_channel';
+          break;
+        case 'new_route':
+        case 'route_update':
+        case 'route_cleared':
+        case 'route_timeout':
+          channelId = 'route_channel';
+          break;
+        default:
+          channelId = 'general_channel';
+      }
+
+      // Configure sound and vibration based on user preferences
+      final androidDetails = AndroidNotificationDetails(
+        channelId,
+        _getChannelName(channelId),
+        channelDescription: _getChannelDescription(channelId),
+        importance: type == 'emergency_assignment'
+            ? Importance.max
+            : Importance.defaultImportance,
+        priority: type == 'emergency_assignment'
+            ? Priority.max
+            : Priority.defaultPriority,
+        enableVibration: preferences.vibrationEnabled,
+        playSound: preferences.soundEnabled,
+        sound: preferences.soundEnabled &&
+                preferences.notificationTone != 'default'
+            ? RawResourceAndroidNotificationSound(preferences.notificationTone)
+            : null,
+      );
+
+      const iosDetails = DarwinNotificationDetails(
+        presentAlert: true,
+        presentBadge: true,
+        presentSound: true,
+      );
+
+      final details = NotificationDetails(
+        android: androidDetails,
+        iOS: iosDetails,
+      );
+
+      await _localNotifications.show(
+        DateTime.now().millisecondsSinceEpoch.remainder(100000),
+        title,
+        body,
+        details,
+        payload: data != null ? json.encode(data) : null,
+      );
+
+      log('Local notification shown with user preferences');
+    } catch (e) {
+      log('Error showing local notification: $e');
     }
   }
 
@@ -601,26 +750,109 @@ class NotificationService {
   }
 
   /// Send emergency notification to hospital (alias for backward compatibility)
-  Future<bool> sendEmergencyNotificationToHospital({
+  /// Send emergency notification to hospital staff
+  Future<void> sendEmergencyNotificationToHospital({
     required String hospitalId,
     required String emergencyId,
-    required EmergencyPriority priority,
+    required String priority,
     required String description,
     required String location,
   }) async {
-    return await sendNotificationToHospital(
-      hospitalId: hospitalId,
-      type: 'new_emergency',
-      title: '🚨 New Emergency',
-      message: 'New ${priority.displayName} priority emergency at $location',
-      data: {
-        'emergencyId': emergencyId,
-        'priority': priority.value,
-        'description': description,
-        'location': location,
-      },
-      priority: priority == EmergencyPriority.critical ? 'critical' : 'high',
-    );
+    try {
+      // Get hospital staff users
+      final hospitalStaff = await _firestore
+          .collection('users')
+          .where('hospitalId', isEqualTo: hospitalId)
+          .where('role', whereIn: ['doctor', 'nurse', 'admin']).get();
+
+      for (final userDoc in hospitalStaff.docs) {
+        final userId = userDoc.id;
+
+        // Emergency notifications ignore user settings for critical priority
+        final ignoreSettings = priority == 'critical';
+
+        await sendPushNotification(
+          userId: userId,
+          title: 'Emergency Assignment',
+          message: 'New $priority priority emergency: $description',
+          data: {
+            'type': 'emergency_assignment',
+            'emergencyId': emergencyId,
+            'hospitalId': hospitalId,
+            'priority': priority,
+            'location': location,
+            'timestamp': DateTime.now().toIso8601String(),
+          },
+          priority: priority,
+          ignoreSettings: ignoreSettings,
+        );
+      }
+
+      log('Emergency notifications sent to hospital $hospitalId staff');
+    } catch (e) {
+      log('Error sending emergency notifications: $e');
+    }
+  }
+
+  Future<void> sendRouteNotificationToDriver({
+    required String driverId,
+    required String routeId,
+    required String type, // 'new_route', 'route_update', etc.
+    required String message,
+    Map<String, dynamic>? additionalData,
+  }) async {
+    try {
+      final data = {
+        'type': type,
+        'routeId': routeId,
+        'driverId': driverId,
+        'timestamp': DateTime.now().toIso8601String(),
+        ...?additionalData,
+      };
+
+      await sendPushNotification(
+        userId: driverId,
+        title: _getRouteNotificationTitle(type),
+        message: message,
+        data: data,
+        priority: type == 'new_route' ? 'high' : 'normal',
+        ignoreSettings: false, // Route notifications respect user settings
+      );
+
+      log('Route notification sent to driver $driverId');
+    } catch (e) {
+      log('Error sending route notification: $e');
+    }
+  }
+
+  Future<void> sendPoliceNotification({
+    required String officerId,
+    required String routeId,
+    required String type,
+    required String message,
+    Map<String, dynamic>? additionalData,
+  }) async {
+    try {
+      final data = {
+        'type': type,
+        'routeId': routeId,
+        'officerId': officerId,
+        'timestamp': DateTime.now().toIso8601String(),
+        ...?additionalData,
+      };
+
+      await sendPushNotification(
+        userId: officerId,
+        title: _getPoliceNotificationTitle(type),
+        message: message,
+        data: data,
+        priority: 'high',
+      );
+
+      log('Police notification sent to officer $officerId');
+    } catch (e) {
+      log('Error sending police notification: $e');
+    }
   }
 
   /// Send route completion notification to driver
@@ -744,7 +976,7 @@ class NotificationService {
   /// Update user's FCM token in Firestore
   Future<void> updateUserFCMToken(String userId) async {
     try {
-      final token = await getFCMToken();
+      final token = await _messaging.getToken();
       if (token != null) {
         await _firestore.collection('users').doc(userId).update({
           'fcmToken': token,
@@ -754,6 +986,7 @@ class NotificationService {
       }
     } catch (e) {
       log('Error updating FCM token: $e');
+      throw Exception('Failed to update FCM token: $e');
     }
   }
 
@@ -821,6 +1054,95 @@ class NotificationService {
     );
   }
 
+  Stream<List<NotificationModel>> getNotificationsForUser(String userId) {
+    try {
+      return _firestore
+          .collection('notifications')
+          .where('userId', isEqualTo: userId)
+          .orderBy('createdAt', descending: true)
+          .snapshots()
+          .map((snapshot) {
+        return snapshot.docs
+            .map((doc) => NotificationModel.fromFirestore(doc))
+            .toList();
+      });
+    } catch (e) {
+      log('Error getting notifications for user $userId: $e');
+      return Stream.value(<NotificationModel>[]);
+    }
+  }
+
+  Stream<int> getUnreadNotificationCount(String userId) {
+    try {
+      return _firestore
+          .collection('notifications')
+          .where('userId', isEqualTo: userId)
+          .where('isRead', isEqualTo: false)
+          .snapshots()
+          .map((snapshot) => snapshot.docs.length);
+    } catch (e) {
+      log('Error getting unread count for user $userId: $e');
+      return Stream.value(0);
+    }
+  }
+
+  Future<void> markNotificationAsRead(String notificationId) async {
+    try {
+      await _firestore.collection('notifications').doc(notificationId).update({
+        'isRead': true,
+        'readAt': FieldValue.serverTimestamp(),
+      });
+      log('Notification $notificationId marked as read');
+    } catch (e) {
+      log('Error marking notification as read: $e');
+      throw Exception('Failed to mark notification as read: $e');
+    }
+  }
+
+  Future<void> markAllNotificationsAsRead(String userId) async {
+    try {
+      final batch = _firestore.batch();
+      final unreadNotifications = await _firestore
+          .collection('notifications')
+          .where('userId', isEqualTo: userId)
+          .where('isRead', isEqualTo: false)
+          .get();
+
+      for (final doc in unreadNotifications.docs) {
+        batch.update(doc.reference, {
+          'isRead': true,
+          'readAt': FieldValue.serverTimestamp(),
+        });
+      }
+
+      await batch.commit();
+      log('All notifications marked as read for user $userId');
+    } catch (e) {
+      log('Error marking all notifications as read: $e');
+      throw Exception('Failed to mark all notifications as read: $e');
+    }
+  }
+
+  Future<void> clearAllNotifications(String userId) async {
+    try {
+      final batch = _firestore.batch();
+      final userNotifications = await _firestore
+          .collection('notifications')
+          .where('userId', isEqualTo: userId)
+          .get();
+
+      for (final doc in userNotifications.docs) {
+        batch.delete(doc.reference);
+      }
+
+      await batch.commit();
+      log('All notifications cleared for user $userId');
+    } catch (e) {
+      log('Error clearing all notifications: $e');
+      throw Exception('Failed to clear all notifications: $e');
+    }
+  }
+
   /// Handle notification tap
   void _onNotificationTap(NotificationResponse response) {
     if (response.payload != null) {
@@ -856,6 +1178,32 @@ class NotificationService {
   // HELPER METHODS
   // =============================================================================
 
+  String _getRouteNotificationTitle(String type) {
+    switch (type) {
+      case 'new_route':
+        return 'New Route Assignment';
+      case 'route_update':
+        return 'Route Update';
+      case 'route_cleared':
+        return 'Route Cleared';
+      case 'route_timeout':
+        return 'Route Timeout';
+      default:
+        return 'Route Notification';
+    }
+  }
+
+  String _getPoliceNotificationTitle(String type) {
+    switch (type) {
+      case 'route_clearance_request':
+        return 'Route Clearance Request';
+      case 'emergency_assistance':
+        return 'Emergency Assistance Required';
+      default:
+        return 'Police Notification';
+    }
+  }
+
   String _getChannelIdFromType(String type) {
     if (type.contains('emergency')) return 'emergency_channel';
     if (type.contains('route')) return 'route_channel';
@@ -887,6 +1235,8 @@ class NotificationService {
         return 'App notifications';
     }
   }
+
+  bool _isAppInForeground = true;
 }
 
 /// Background message handler

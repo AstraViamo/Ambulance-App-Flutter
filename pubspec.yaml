@@ -51,6 +51,8 @@ dependencies:
   package_info_plus: ^4.2.0
   device_info_plus: ^9.1.1
   battery_plus: ^4.0.2
+  shared_preferences: ^2.2.2
+  http: ^1.1.0  #
 
 
 

@@ -8,7 +8,6 @@ import '../screens/driver_dashboard_screen.dart';
 import '../screens/driver_navigation_screen.dart';
 import '../screens/emergency_details_screen.dart';
 import '../screens/emergency_list_screen.dart';
-import '../screens/hospital_dashboard.dart';
 import '../screens/notifications_screen.dart' as notifications;
 import '../screens/police_dashboard_screen.dart';
 import '../screens/role_dashboards.dart';
@@ -89,7 +88,7 @@ class NavigationService {
       case 'hospital_dashboard':
         return MaterialPageRoute(
           builder: (context) =>
-              const HospitalDashboardScreen(), // Fixed: Use correct class name
+              const HospitalAdminDashboard(), // Fixed: Use correct class name
         );
       case 'admin_dashboard':
         return MaterialPageRoute(
@@ -269,13 +268,13 @@ class NavigationService {
     switch (role) {
       case UserRole.hospitalAdmin:
       case UserRole.hospitalStaff:
-        return const HospitalDashboardScreen();
+        return const HospitalDashboard();
       case UserRole.police:
         return const PoliceDashboardScreen();
       case UserRole.ambulanceDriver:
         return const DriverDashboardScreen();
       default:
-        return const HospitalDashboardScreen(); // Default fallback
+        return const HospitalDashboard(); // Default fallback
     }
   }
 }

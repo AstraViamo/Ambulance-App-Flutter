@@ -2,9 +2,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../models/notification_model.dart';
 import '../providers/auth_provider.dart';
 import '../providers/notification_providers.dart';
-import '../services/notification_service.dart';
 
 class NotificationsScreen extends ConsumerStatefulWidget {
   const NotificationsScreen({Key? key}) : super(key: key);

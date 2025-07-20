@@ -1,4 +1,4 @@
-// lib/screens/improved_auth_wrapper.dart
+// lib/screens/auth_wrapper.dart
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -122,10 +122,10 @@ class _AuthWrapperState extends ConsumerState<AuthWrapper> {
                 color: Colors.white,
                 borderRadius: BorderRadius.circular(16),
               ),
-              child: const Icon(
+              child: Icon(
                 Icons.local_hospital,
                 size: 40,
-                color: Colors.red,
+                color: Colors.red.shade700,
               ),
             ),
             const SizedBox(height: 24),
@@ -155,9 +155,9 @@ class _AuthWrapperState extends ConsumerState<AuthWrapper> {
   Widget _buildDashboard(UserRole role) {
     switch (role) {
       case UserRole.hospitalAdmin:
-        return const HospitalAdminDashboard();
+        return const HospitalDashboard();
       case UserRole.hospitalStaff:
-        return const HospitalAdminDashboard();
+        return const HospitalDashboard();
       case UserRole.ambulanceDriver:
         return const DriverDashboard();
       case UserRole.police:

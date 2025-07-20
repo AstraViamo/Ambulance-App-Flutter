@@ -69,9 +69,9 @@ class RouteService {
         endLat: patientLat,
         endLng: patientLng,
         startAddress: 'Ambulance Location',
-        endAddress: emergency.location,
+        endAddress: emergency.patientAddressString,
         emergencyPriority: emergency.priority.value,
-        patientLocation: emergency.location,
+        patientLocation: emergency.patientAddressString,
         createdAt: DateTime.now(),
         updatedAt: DateTime.now(),
         estimatedArrival: DateTime.now().add(
@@ -390,6 +390,120 @@ class RouteService {
     } catch (e) {
       log('Error sending status update notifications: $e');
       // Don't throw - notifications failing shouldn't fail the status update
+    }
+  }
+
+  // Add these methods to your RouteService class in lib/services/route_service.dart
+
+  // =============================================================================
+  // DRIVER DASHBOARD QUERIES
+  // =============================================================================
+
+  /// Get all routes for a specific driver
+  Stream<List<AmbulanceRouteModel>> getRoutesByDriver(String driverId) {
+    return _firestore
+        .collection('routes')
+        .where('driverId', isEqualTo: driverId)
+        .orderBy('createdAt', descending: true)
+        .snapshots()
+        .map((snapshot) => snapshot.docs
+            .map((doc) => AmbulanceRouteModel.fromFirestore(doc))
+            .toList());
+  }
+
+  /// Get current active route for driver
+  Stream<AmbulanceRouteModel?> getCurrentRouteForDriver(String driverId) {
+    return _firestore
+        .collection('routes')
+        .where('driverId', isEqualTo: driverId)
+        .where('status', whereIn: ['active', 'cleared'])
+        .orderBy('createdAt', descending: true)
+        .limit(1)
+        .snapshots()
+        .map((snapshot) {
+          if (snapshot.docs.isNotEmpty) {
+            return AmbulanceRouteModel.fromFirestore(snapshot.docs.first);
+          }
+          return null;
+        });
+  }
+
+  /// Get route history for driver (completed routes only)
+  Stream<List<AmbulanceRouteModel>> getDriverRouteHistory(String driverId) {
+    return _firestore
+        .collection('routes')
+        .where('driverId', isEqualTo: driverId)
+        .where('status', isEqualTo: 'completed')
+        .orderBy('completedAt', descending: true)
+        .snapshots()
+        .map((snapshot) => snapshot.docs
+            .map((doc) => AmbulanceRouteModel.fromFirestore(doc))
+            .toList());
+  }
+
+  /// Get active routes count for driver
+  Future<int> getActiveRoutesCountForDriver(String driverId) async {
+    try {
+      final querySnapshot = await _firestore
+          .collection('routes')
+          .where('driverId', isEqualTo: driverId)
+          .where('status', whereIn: ['active', 'cleared']).get();
+
+      return querySnapshot.docs.length;
+    } catch (e) {
+      log('Error getting active routes count for driver: $e');
+      return 0;
+    }
+  }
+
+  /// Get driver statistics
+  Future<Map<String, dynamic>> getDriverStatistics(String driverId) async {
+    try {
+      final allRoutes = await _firestore
+          .collection('routes')
+          .where('driverId', isEqualTo: driverId)
+          .get();
+
+      final routes = allRoutes.docs
+          .map((doc) => AmbulanceRouteModel.fromFirestore(doc))
+          .toList();
+
+      final completedRoutes =
+          routes.where((r) => r.status == RouteStatus.completed).length;
+      final totalRoutes = routes.length;
+      final activeRoutes =
+          routes.where((r) => r.status != RouteStatus.completed).length;
+
+      // Calculate average completion time for completed routes
+      final completedRoutesList =
+          routes.where((r) => r.status == RouteStatus.completed).toList();
+      double avgCompletionTime = 0;
+
+      if (completedRoutesList.isNotEmpty) {
+        final totalMinutes = completedRoutesList
+            .map((r) =>
+                r.estimatedArrival?.difference(r.createdAt).inMinutes ?? 0)
+            .fold(0, (sum, minutes) => sum + minutes);
+        avgCompletionTime = totalMinutes / completedRoutesList.length;
+      }
+
+      return {
+        'totalRoutes': totalRoutes,
+        'completedRoutes': completedRoutes,
+        'activeRoutes': activeRoutes,
+        'completionRate':
+            totalRoutes > 0 ? (completedRoutes / totalRoutes * 100).round() : 0,
+        'avgCompletionTimeMinutes': avgCompletionTime.round(),
+      };
+    } catch (e) {
+      log('Error getting driver statistics: $e');
+      return {
+        'totalRoutes': 0,
+        'completedRoutes': 0,
+        'activeRoutes': 0,
+        'completionRate': 0,
+        'avgCompletionTimeMinutes': 0,
+      };
     }
   }
 

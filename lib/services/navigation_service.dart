@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../models/user_model.dart';
 import '../providers/permissions_providers.dart';
 import '../screens/driver_dashboard_screen.dart';
+import '../screens/driver_navigation_screen.dart';
 import '../screens/emergency_details_screen.dart';
 import '../screens/emergency_list_screen.dart';
 import '../screens/hospital_dashboard.dart';
@@ -87,50 +88,44 @@ class NavigationService {
     switch (screenName) {
       case 'hospital_dashboard':
         return MaterialPageRoute(
-          builder: (context) => const HospitalDashboard(),
-          settings: RouteSettings(name: screenName, arguments: arguments),
+          builder: (context) => HospitalDashboard(
+            hospitalId: arguments?['hospitalId'],
+          ),
         );
-
-      case 'admin_dashboard':
+      case 'driver_dashboard':
         return MaterialPageRoute(
-          builder: (context) => const HospitalAdminDashboard(),
-          settings: RouteSettings(name: screenName, arguments: arguments),
+          builder: (context) => const DriverDashboardScreen(),
         );
-
+      case 'driver_navigation':
+        return MaterialPageRoute(
+          builder: (context) => DriverNavigationScreen(
+            route: arguments!['route'],
+          ),
+        );
       case 'police_dashboard':
         return MaterialPageRoute(
           builder: (context) => const PoliceDashboardScreen(),
-          settings: RouteSettings(name: screenName, arguments: arguments),
         );
-
-      case 'driver_dashboard':
-        return MaterialPageRoute(
-          builder: (context) => const DriverDashboard(),
-          settings: RouteSettings(name: screenName, arguments: arguments),
-        );
-
       case 'emergency_list':
         return MaterialPageRoute(
           builder: (context) => const EmergencyListScreen(),
-          settings: RouteSettings(name: screenName, arguments: arguments),
         );
-
       case 'emergency_details':
-        final emergency = arguments?['emergency'];
-        if (emergency != null) {
-          return MaterialPageRoute(
-            builder: (context) => EmergencyDetailsScreen(emergency: emergency),
-            settings: RouteSettings(name: screenName, arguments: arguments),
-          );
-        }
-        return null;
-
+        return MaterialPageRoute(
+          builder: (context) => EmergencyDetailsScreen(
+            emergencyId: arguments!['emergencyId'],
+          ),
+        );
       case 'notifications':
         return MaterialPageRoute(
           builder: (context) => const NotificationsScreen(),
-          settings: RouteSettings(name: screenName, arguments: arguments),
         );
-
+      case 'role_dashboards':
+        return MaterialPageRoute(
+          builder: (context) => RoleDashboards(
+            userRole: arguments!['userRole'],
+          ),
+        );
       default:
         return null;
     }
@@ -166,6 +161,8 @@ class NavigationService {
         return 'Police Dashboard';
       case 'driver_dashboard':
         return 'Driver Dashboard';
+      case 'driver_navigation':
+        return 'Driver Navigation';
       case 'emergency_list':
         return 'Emergency List';
       case 'emergency_details':
@@ -198,35 +195,20 @@ class NavigationService {
           icon: Icon(Icons.dashboard),
           label: 'Dashboard',
         ));
-
-        // Emergencies (if has permission)
-        if (ref.read(hasPermissionProvider(Permission.viewEmergencies))) {
-          items.add(const BottomNavigationBarItem(
-            icon: Icon(Icons.emergency),
-            label: 'Emergencies',
-          ));
-        }
-
-        // Routes (if has permission)
-        if (ref.read(hasPermissionProvider(Permission.viewRoutes))) {
-          items.add(const BottomNavigationBarItem(
-            icon: Icon(Icons.route),
-            label: 'Routes',
-          ));
-        }
-
-        // Reports (if has permission)
-        if (ref.read(hasPermissionProvider(Permission.viewReports))) {
-          items.add(const BottomNavigationBarItem(
-            icon: Icon(Icons.analytics),
-            label: 'Reports',
-          ));
-        }
-
-        // Settings
+        // Emergencies
         items.add(const BottomNavigationBarItem(
-          icon: Icon(Icons.settings),
-          label: 'Settings',
+          icon: Icon(Icons.emergency),
+          label: 'Emergencies',
+        ));
+        // Routes
+        items.add(const BottomNavigationBarItem(
+          icon: Icon(Icons.route),
+          label: 'Routes',
+        ));
+        // Reports
+        items.add(const BottomNavigationBarItem(
+          icon: Icon(Icons.analytics),
+          label: 'Reports',
         ));
         break;
 
@@ -236,28 +218,20 @@ class NavigationService {
           icon: Icon(Icons.dashboard),
           label: 'Dashboard',
         ));
-
-        // Emergencies (if has permission)
-        if (ref
-            .read(hasPermissionProvider(Permission.acceptEmergencyRequests))) {
-          items.add(const BottomNavigationBarItem(
-            icon: Icon(Icons.emergency),
-            label: 'Emergencies',
-          ));
-        }
-
-        // Navigation (if has permission)
-        if (ref.read(hasPermissionProvider(Permission.accessNavigationTools))) {
-          items.add(const BottomNavigationBarItem(
-            icon: Icon(Icons.navigation),
-            label: 'Navigation',
-          ));
-        }
-
-        // Profile
+        // Current Route
         items.add(const BottomNavigationBarItem(
-          icon: Icon(Icons.person),
-          label: 'Profile',
+          icon: Icon(Icons.route),
+          label: 'Route',
+        ));
+        // Navigation
+        items.add(const BottomNavigationBarItem(
+          icon: Icon(Icons.navigation),
+          label: 'Navigation',
+        ));
+        // History
+        items.add(const BottomNavigationBarItem(
+          icon: Icon(Icons.history),
+          label: 'History',
         ));
         break;
 
@@ -267,28 +241,43 @@ class NavigationService {
           icon: Icon(Icons.dashboard),
           label: 'Dashboard',
         ));
-
-        // Routes (if has permission)
-        if (ref.read(hasPermissionProvider(Permission.viewRoutes))) {
-          items.add(const BottomNavigationBarItem(
-            icon: Icon(Icons.route),
-            label: 'Routes',
-          ));
-        }
-
-        // Traffic (if has permission)
-        if (ref
-            .read(hasPermissionProvider(Permission.manageTrafficIncidents))) {
-          items.add(const BottomNavigationBarItem(
-            icon: Icon(Icons.traffic),
-            label: 'Traffic',
-          ));
-        }
-
-        // Profile
+        // Traffic
         items.add(const BottomNavigationBarItem(
-          icon: Icon(Icons.person),
-          label: 'Profile',
+          icon: Icon(Icons.traffic),
+          label: 'Traffic',
+        ));
+        // Routes
+        items.add(const BottomNavigationBarItem(
+          icon: Icon(Icons.route),
+          label: 'Routes',
+        ));
+        // Reports
+        items.add(const BottomNavigationBarItem(
+          icon: Icon(Icons.report),
+          label: 'Reports',
+        ));
+        break;
+
+      case UserRole.systemAdmin:
+        // Admin Dashboard
+        items.add(const BottomNavigationBarItem(
+          icon: Icon(Icons.admin_panel_settings),
+          label: 'Admin',
+        ));
+        // Users
+        items.add(const BottomNavigationBarItem(
+          icon: Icon(Icons.people),
+          label: 'Users',
+        ));
+        // System
+        items.add(const BottomNavigationBarItem(
+          icon: Icon(Icons.settings),
+          label: 'System',
+        ));
+        // Analytics
+        items.add(const BottomNavigationBarItem(
+          icon: Icon(Icons.analytics),
+          label: 'Analytics',
         ));
         break;
     }
@@ -296,17 +285,13 @@ class NavigationService {
     return items;
   }
 
-  // Handle bottom navigation tap with permission checks
-  static void handleBottomNavigationTap(
+  // Handle navigation item selection
+  static void handleNavigationItemSelected(
     BuildContext context,
     WidgetRef ref,
-    int index,
+    NavigationItem item,
     UserRole role,
   ) {
-    final items = getBottomNavigationItems(ref, role);
-    if (index >= items.length) return;
-
-    final item = items[index];
     String? screenName;
 
     switch (item.label) {
@@ -341,9 +326,9 @@ class NavigationService {
         screenName = 'settings';
         break;
       case 'Navigation':
-        // Handle driver navigation
+        // For ambulance drivers, this is now properly handled
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Navigation feature coming soon')),
+          const SnackBar(content: Text('Navigation available in active route')),
         );
         return;
       case 'Traffic':
@@ -382,10 +367,8 @@ class NavigationService {
                   : null,
               child: currentUser.profileImageUrl == null
                   ? Text(
-                      '${currentUser.firstName[0]}${currentUser.lastName[0]}'
-                          .toUpperCase(),
-                      style: const TextStyle(
-                          fontSize: 20, fontWeight: FontWeight.bold),
+                      currentUser.firstName[0].toUpperCase(),
+                      style: const TextStyle(fontSize: 24),
                     )
                   : null,
             ),
@@ -393,18 +376,34 @@ class NavigationService {
               color: _getRoleColor(currentUser.role),
             ),
           ),
-          ...availableMenuItems.map((item) => _buildDrawerItem(
-                context,
-                ref,
-                item,
+          ...availableMenuItems.map((item) => ListTile(
+                leading: Icon(item.icon),
+                title: Text(item.label),
+                onTap: () {
+                  Navigator.pop(context); // Close drawer
+                  handleNavigationItemSelected(
+                    context,
+                    ref,
+                    NavigationItem.fromMenuItem(item),
+                    currentUser.role,
+                  );
+                },
               )),
           const Divider(),
           ListTile(
-            leading: const Icon(Icons.logout),
-            title: const Text('Sign Out'),
-            onTap: () async {
-              Navigator.of(context).pop();
-              await _signOut(context, ref);
+            leading: const Icon(Icons.settings),
+            title: const Text('Settings'),
+            onTap: () {
+              Navigator.pop(context);
+              // Navigate to settings
+            },
+          ),
+          ListTile(
+            leading: const Icon(Icons.logout, color: Colors.red),
+            title: const Text('Sign Out', style: TextStyle(color: Colors.red)),
+            onTap: () {
+              Navigator.pop(context);
+              _showSignOutDialog(context, ref);
             },
           ),
         ],
@@ -412,121 +411,66 @@ class NavigationService {
     );
   }
 
-  static Widget _buildDrawerItem(
-    BuildContext context,
-    WidgetRef ref,
-    MenuItem menuItem,
-  ) {
-    return ListTile(
-      leading: Icon(menuItem.icon),
-      title: Text(menuItem.title),
-      onTap: () {
-        Navigator.of(context).pop();
-        if (menuItem.screenName != null) {
-          navigateToScreen(context, ref, menuItem.screenName!);
-        } else if (menuItem.onTap != null) {
-          menuItem.onTap!();
-        }
-      },
-    );
-  }
-
+  // Get role-specific color
   static Color _getRoleColor(UserRole role) {
     switch (role) {
       case UserRole.hospitalAdmin:
-        return Colors.red.shade700;
       case UserRole.hospitalStaff:
-        return Colors.red.shade600;
+        return Colors.blue.shade700;
       case UserRole.ambulanceDriver:
-        return Colors.green.shade600;
+        return Colors.orange.shade700;
       case UserRole.police:
-        return Colors.blue.shade800;
+        return Colors.indigo.shade700;
+      case UserRole.systemAdmin:
+        return Colors.purple.shade700;
     }
   }
 
-  static Future<void> _signOut(BuildContext context, WidgetRef ref) async {
-    try {
-      final authService = ref.read(authServiceProvider);
-      await authService.signOut();
-    } catch (e) {
-      if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error signing out: $e')),
-        );
-      }
-    }
+  // Show sign out confirmation dialog
+  static void _showSignOutDialog(BuildContext context, WidgetRef ref) {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Sign Out'),
+        content: const Text('Are you sure you want to sign out?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () async {
+              Navigator.of(context).pop();
+              // Handle sign out
+              // await ref.read(authStateProvider.notifier).signOut();
+            },
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
+            child:
+                const Text('Sign Out', style: TextStyle(color: Colors.white)),
+          ),
+        ],
+      ),
+    );
   }
 }
 
 // Navigation item model
 class NavigationItem {
-  final String title;
+  final String label;
   final IconData icon;
-  final String? screenName;
-  final VoidCallback? onTap;
-  final List<Permission> requiredPermissions;
+  final String? route;
 
   NavigationItem({
-    required this.title,
+    required this.label,
     required this.icon,
-    this.screenName,
-    this.onTap,
-    this.requiredPermissions = const [],
+    this.route,
   });
 
-  factory NavigationItem.fromMenuItem(MenuItem menuItem) {
+  factory NavigationItem.fromMenuItem(dynamic menuItem) {
     return NavigationItem(
-      title: menuItem.title,
+      label: menuItem.label,
       icon: menuItem.icon,
-      screenName: menuItem.screenName,
-      onTap: menuItem.onTap,
-      requiredPermissions: menuItem.requiredPermissions,
+      route: menuItem.route,
     );
-  }
-}
-
-// Menu item model (this should be added to your models)
-class MenuItem {
-  final String title;
-  final IconData icon;
-  final String? screenName;
-  final VoidCallback? onTap;
-  final List<Permission> requiredPermissions;
-
-  MenuItem({
-    required this.title,
-    required this.icon,
-    this.screenName,
-    this.onTap,
-    this.requiredPermissions = const [],
-  });
-}
-
-// Provider for navigation state
-final navigationIndexProvider = StateProvider<int>((ref) => 0);
-
-// Navigation route observer for permission tracking
-class PermissionRouteObserver extends RouteObserver<PageRoute<dynamic>> {
-  final WidgetRef ref;
-
-  PermissionRouteObserver(this.ref);
-
-  @override
-  void didPush(Route<dynamic> route, Route<dynamic>? previousRoute) {
-    super.didPush(route, previousRoute);
-    _logNavigation(route.settings.name);
-  }
-
-  @override
-  void didReplace({Route<dynamic>? newRoute, Route<dynamic>? oldRoute}) {
-    super.didReplace(newRoute: newRoute, oldRoute: oldRoute);
-    _logNavigation(newRoute?.settings.name);
-  }
-
-  void _logNavigation(String? routeName) {
-    if (routeName != null) {
-      debugPrint('Navigation to: $routeName');
-      // Here you could log navigation events for analytics or audit purposes
-    }
   }
 }

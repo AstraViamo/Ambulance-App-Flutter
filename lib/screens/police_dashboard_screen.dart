@@ -1192,7 +1192,7 @@ class _PoliceDashboardScreenState extends ConsumerState<PoliceDashboardScreen>
           ),
           TextButton(
             onPressed: () {
-              ref.read(authProvider.notifier).signOut();
+              ref.read(authServiceProvider).signOut();
               Navigator.pushReplacement(
                 context,
                 MaterialPageRoute(builder: (context) => const LoginScreen()),

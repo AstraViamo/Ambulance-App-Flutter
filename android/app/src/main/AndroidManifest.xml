@@ -54,10 +54,10 @@
             android:name="com.google.android.geo.API_KEY"
             android:value="AIzaSyCCd8GvC_IoSqz_MoiW8CNAdl4D28vuSWA" />
 
-        <!-- Firebase Messaging Service -->
-<!--        <service-->
-<!--            android:name="com.google.firebase.messaging.FirebaseMessagingService"-->
-<!--            android:exported="false" />-->
+
+        <service
+            android:name="com.google.firebase.messaging.FirebaseMessagingService"
+            android:exported="false" />
 
         <!-- Local Notifications Receiver -->
         <!-- Local Notifications Receiver -->

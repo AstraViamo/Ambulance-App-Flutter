@@ -85,14 +85,14 @@ final policeAllRoutesProvider = StreamProvider<List<AmbulanceRouteModel>>(
 final activeRoutesProvider =
     StreamProvider.family<List<AmbulanceRouteModel>, String>(
   (ref, hospitalId) {
-    return ref.watch(hospitalActiveRoutesProvider(hospitalId)).stream;
+    return ref.watch(hospitalActiveRoutesProvider(hospitalId).stream);
   },
 );
 
 /// Legacy all active routes provider (redirects to police all routes)
 final allActiveRoutesProvider = StreamProvider<List<AmbulanceRouteModel>>(
   (ref) {
-    return ref.watch(policeAllRoutesProvider).stream;
+    return ref.watch(policeAllRoutesProvider.stream);
   },
 );
 
@@ -132,6 +132,37 @@ final routesByStatusesProvider =
   (ref, statuses) {
     final routeService = ref.watch(routeServiceProvider);
     return routeService.getRoutesByStatuses(statuses);
+  },
+);
+
+// =============================================================================
+// DRIVER DASHBOARD PROVIDERS
+// =============================================================================
+
+/// Routes for a specific driver
+final routesByDriverProvider =
+    StreamProvider.family<List<AmbulanceRouteModel>, String>(
+  (ref, driverId) {
+    final routeService = ref.watch(routeServiceProvider);
+    return routeService.getRoutesByDriver(driverId);
+  },
+);
+
+/// Current active route for driver
+final currentRouteForDriverProvider =
+    StreamProvider.family<AmbulanceRouteModel?, String>(
+  (ref, driverId) {
+    final routeService = ref.watch(routeServiceProvider);
+    return routeService.getCurrentRouteForDriver(driverId);
+  },
+);
+
+/// Route history for driver (completed routes)
+final driverRouteHistoryProvider =
+    StreamProvider.family<List<AmbulanceRouteModel>, String>(
+  (ref, driverId) {
+    final routeService = ref.watch(routeServiceProvider);
+    return routeService.getDriverRouteHistory(driverId);
   },
 );
 

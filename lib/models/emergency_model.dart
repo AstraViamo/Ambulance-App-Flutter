@@ -12,7 +12,7 @@ enum EmergencyPriority {
 
   static EmergencyPriority fromString(String value) {
     return EmergencyPriority.values.firstWhere(
-          (priority) => priority.value == value,
+      (priority) => priority.value == value,
       orElse: () => EmergencyPriority.medium,
     );
   }
@@ -70,7 +70,7 @@ enum EmergencyStatus {
 
   static EmergencyStatus fromString(String value) {
     return EmergencyStatus.values.firstWhere(
-          (status) => status.value == value,
+      (status) => status.value == value,
       orElse: () => EmergencyStatus.pending,
     );
   }
@@ -236,11 +236,14 @@ class EmergencyModel {
       'createdBy': createdBy,
       'createdAt': Timestamp.fromDate(createdAt),
       'updatedAt': Timestamp.fromDate(updatedAt),
-      if (assignedAmbulanceId != null) 'assignedAmbulanceId': assignedAmbulanceId,
+      if (assignedAmbulanceId != null)
+        'assignedAmbulanceId': assignedAmbulanceId,
       if (assignedDriverId != null) 'assignedDriverId': assignedDriverId,
       if (assignedAt != null) 'assignedAt': Timestamp.fromDate(assignedAt!),
-      if (estimatedArrival != null) 'estimatedArrival': Timestamp.fromDate(estimatedArrival!),
-      if (actualArrival != null) 'actualArrival': Timestamp.fromDate(actualArrival!),
+      if (estimatedArrival != null)
+        'estimatedArrival': Timestamp.fromDate(estimatedArrival!),
+      if (actualArrival != null)
+        'actualArrival': Timestamp.fromDate(actualArrival!),
       if (additionalInfo != null) 'additionalInfo': additionalInfo,
       if (attachments != null) 'attachments': attachments,
       if (notes != null) 'notes': notes,
@@ -297,9 +300,13 @@ class EmergencyModel {
   // Helper getters
   bool get isAssigned => assignedAmbulanceId != null;
   bool get isPending => status == EmergencyStatus.pending;
-  bool get isActive => status != EmergencyStatus.completed && status != EmergencyStatus.cancelled;
+  bool get isActive =>
+      status != EmergencyStatus.completed &&
+      status != EmergencyStatus.cancelled;
   bool get isCritical => priority == EmergencyPriority.critical;
-  bool get isHighPriority => priority == EmergencyPriority.high || priority == EmergencyPriority.critical;
+  bool get isHighPriority =>
+      priority == EmergencyPriority.high ||
+      priority == EmergencyPriority.critical;
 
   String get priorityDisplayName => priority.displayName;
   String get statusDisplayName => status.displayName;

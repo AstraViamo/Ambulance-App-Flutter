@@ -6,7 +6,6 @@ import '../models/route_model.dart';
 import '../providers/auth_provider.dart';
 import '../providers/emergency_providers.dart';
 import '../providers/route_providers.dart';
-import 'emergency_details_screen.dart';
 import 'hospital_route_map_screen.dart';
 import 'login_screen.dart';
 import 'route_details_screen.dart';
@@ -944,7 +943,7 @@ class _HospitalDashboardScreenState
           ),
           TextButton(
             onPressed: () {
-              ref.read(authProvider.notifier).signOut();
+              ref.read(authServiceProvider).signOut();
               Navigator.pushReplacement(
                 context,
                 MaterialPageRoute(builder: (context) => const LoginScreen()),

@@ -1,26 +1,24 @@
 // lib/screens/driver_dashboard_screen.dart
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:geolocator/geolocator.dart';
-import 'dart:async';
 
-import '../models/ambulance_model.dart';
 import '../models/route_model.dart';
-import '../models/emergency_model.dart';
 import '../providers/auth_provider.dart';
 import '../providers/location_providers.dart';
 import '../providers/route_providers.dart';
-import '../providers/emergency_providers.dart';
-import '../services/notification_service.dart';
-import 'login_screen.dart';
 import 'driver_navigation_screen.dart';
+import 'login_screen.dart';
 import 'route_details_screen.dart';
 
 class DriverDashboardScreen extends ConsumerStatefulWidget {
   const DriverDashboardScreen({Key? key}) : super(key: key);
 
   @override
-  ConsumerState<DriverDashboardScreen> createState() => _DriverDashboardScreenState();
+  ConsumerState<DriverDashboardScreen> createState() =>
+      _DriverDashboardScreenState();
 }
 
 class _DriverDashboardScreenState extends ConsumerState<DriverDashboardScreen>
@@ -29,14 +27,17 @@ class _DriverDashboardScreenState extends ConsumerState<DriverDashboardScreen>
   Timer? _locationTimer;
   Position? _currentPosition;
   String? driverId;
+  String? _currentAmbulanceId;
   AmbulanceRouteModel? _currentRoute;
+  List<AmbulanceRouteModel> _routeHistory = [];
 
   @override
   void initState() {
     super.initState();
     _tabController = TabController(length: 4, vsync: this);
-    _initializeDriver();
-    _startLocationTracking();
+    _loadCurrentRoute();
+    _loadRouteHistory();
+    _startLocationUpdates();
   }
 
   @override
@@ -46,80 +47,119 @@ class _DriverDashboardScreenState extends ConsumerState<DriverDashboardScreen>
     super.dispose();
   }
 
-  void _initializeDriver() {
-    final currentUser = ref.read(currentUserProvider);
-    currentUser.whenData((user) {
-      if (user != null) {
-        setState(() {
-          driverId = user.id;
-        });
-        _loadCurrentRoute();
-      }
-    });
-  }
-
-  void _loadCurrentRoute() async {
-    if (driverId == null) return;
-
-    // Get current assignment/route for driver
+  Future<void> _loadCurrentRoute() async {
     try {
-      // Implementation to get current route for driver
-      // This would typically query the routes collection for active routes assigned to this driver
+      final currentUser = ref.read(currentUserProvider);
+      await currentUser.when(
+        data: (user) async {
+          if (user != null) {
+            driverId = user.id;
+            _currentAmbulanceId =
+                user.roleSpecificData.assignedAmbulances?.isNotEmpty == true
+                    ? user.roleSpecificData.assignedAmbulances!.first
+                    : null;
+            // Get current active route for this driver
+            final currentRouteStream =
+                ref.read(currentRouteForDriverProvider(user.id));
+            currentRouteStream.when(
+              data: (route) {
+                if (mounted) {
+                  setState(() {
+                    _currentRoute = route;
+                  });
+                }
+              },
+              loading: () {},
+              error: (error, stack) {
+                print('Error loading current route: $error');
+              },
+            );
+          }
+        },
+        loading: () {},
+        error: (error, stack) {
+          print('Error getting current user: $error');
+        },
+      );
     } catch (e) {
       print('Error loading current route: $e');
     }
   }
 
-  void _startLocationTracking() {
-    _locationTimer = Timer.periodic(const Duration(seconds: 30), (timer) {
+  Future<void> _loadRouteHistory() async {
+    try {
+      if (driverId != null) {
+        final historyStream = ref.read(driverRouteHistoryProvider(driverId!));
+        historyStream.when(
+          data: (routes) {
+            if (mounted) {
+              setState(() {
+                _routeHistory = routes;
+              });
+            }
+          },
+          loading: () {},
+          error: (error, stack) {
+            print('Error loading route history: $error');
+          },
+        );
+      }
+    } catch (e) {
+      print('Error loading route history: $e');
+    }
+  }
+
+  void _startLocationUpdates() {
+    _updateLocation();
+    _locationTimer = Timer.periodic(const Duration(seconds: 30), (_) {
       _updateLocation();
     });
   }
 
-  void _updateLocation() async {
+  Future<void> _updateLocation() async {
     try {
+      final permission = await Geolocator.checkPermission();
+      if (permission == LocationPermission.denied) {
+        final requestPermission = await Geolocator.requestPermission();
+        if (requestPermission == LocationPermission.denied) {
+          return;
+        }
+      }
+
       final position = await Geolocator.getCurrentPosition(
         desiredAccuracy: LocationAccuracy.high,
       );
 
-      setState(() {
-        _currentPosition = position;
-      });
+      if (mounted) {
+        setState(() {
+          _currentPosition = position;
+        });
 
-      // Check if near destination for auto-completion
-      if (_currentRoute != null && _currentPosition != null) {
-        _checkDestinationProximity();
-      }
+        // Update location in provider
+        if (driverId != null) {
+          final trackingNotifier = ref.read(trackingStateProvider.notifier);
+          final trackingState = ref.read(trackingStateProvider);
 
-      // Update location in database
-      if (driverId != null) {
-        // Update driver location in database
+          // If not already tracking, start tracking
+          if (!trackingState.isTracking && _currentAmbulanceId != null) {
+            await trackingNotifier.startTracking(
+              ambulanceId: _currentAmbulanceId!,
+              driverId: driverId!,
+              initialStatus: 'available',
+            );
+          }
+          // Location updates will happen automatically when tracking is active
+        }
       }
     } catch (e) {
       print('Error updating location: $e');
     }
   }
 
-  void _checkDestinationProximity() {
-    if (_currentRoute == null || _currentPosition == null) return;
-
-    final distance = Geolocator.distanceBetween(
-      _currentPosition!.latitude,
-      _currentPosition!.longitude,
-      _currentRoute!.endLat,
-      _currentRoute!.endLng,
-    );
-
-    // If within 50 meters of destination
-    if (distance <= 50) {
-      _showArrivalDialog();
-    }
-  }
-
   @override
   Widget build(BuildContext context) {
     final currentUser = ref.watch(currentUserProvider);
-    final trackingState = ref.watch(locationTrackingProvider);
+    final trackingState = ref.watch(trackingStateProvider);
 
     return currentUser.when(
       data: (user) {
@@ -131,7 +171,8 @@ class _DriverDashboardScreenState extends ConsumerState<DriverDashboardScreen>
           appBar: AppBar(
             title: const Text(
               'Driver Dashboard',
-              style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+              style:
+                  TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
             ),
             backgroundColor: Colors.orange.shade700,
             iconTheme: const IconThemeData(color: Colors.white),
@@ -140,6 +181,7 @@ class _DriverDashboardScreenState extends ConsumerState<DriverDashboardScreen>
                 icon: const Icon(Icons.refresh, color: Colors.white),
                 onPressed: () {
                   _loadCurrentRoute();
+                  _loadRouteHistory();
                   _updateLocation();
                 },
                 tooltip: 'Refresh',
@@ -250,7 +292,7 @@ class _DriverDashboardScreenState extends ConsumerState<DriverDashboardScreen>
           const SizedBox(height: 16),
 
           // Location Status
-          _buildLocationStatus(),
+          _buildLocationStatusCard(),
         ],
       ),
     );
@@ -258,31 +300,20 @@ class _DriverDashboardScreenState extends ConsumerState<DriverDashboardScreen>
 
   Widget _buildDriverStatusCard(dynamic user, dynamic trackingState) {
     return Card(
-      elevation: 4,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-      child: Container(
+      child: Padding(
         padding: const EdgeInsets.all(16),
-        decoration: BoxDecoration(
-          gradient: LinearGradient(
-            colors: [Colors.orange.shade600, Colors.orange.shade800],
-          ),
-          borderRadius: BorderRadius.circular(12),
-        ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Row(
               children: [
-                Container(
-                  padding: const EdgeInsets.all(8),
-                  decoration: BoxDecoration(
-                    color: Colors.white.withOpacity(0.2),
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  child: const Icon(
+                CircleAvatar(
+                  radius: 25,
+                  backgroundColor: Colors.orange.shade100,
+                  child: Icon(
                     Icons.local_shipping,
-                    color: Colors.white,
-                    size: 32,
+                    color: Colors.orange.shade700,
+                    size: 30,
                   ),
                 ),
                 const SizedBox(width: 16),
@@ -293,16 +324,14 @@ class _DriverDashboardScreenState extends ConsumerState<DriverDashboardScreen>
                       Text(
                         '${user.firstName} ${user.lastName}',
                         style: const TextStyle(
-                          color: Colors.white,
                           fontSize: 18,
                           fontWeight: FontWeight.bold,
                         ),
                       ),
-                      const SizedBox(height: 4),
                       Text(
                         'Ambulance Driver',
-                        style: const TextStyle(
-                          color: Colors.white70,
+                        style: TextStyle(
+                          color: Colors.grey.shade600,
                           fontSize: 14,
                         ),
                       ),
@@ -310,78 +339,29 @@ class _DriverDashboardScreenState extends ConsumerState<DriverDashboardScreen>
                   ),
                 ),
                 Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
                   decoration: BoxDecoration(
-                    color: trackingState.isTracking ? Colors.green : Colors.red,
-                    borderRadius: BorderRadius.circular(16),
+                    color: _currentRoute != null
+                        ? Colors.green.shade100
+                        : Colors.grey.shade100,
+                    borderRadius: BorderRadius.circular(12),
                   ),
                   child: Text(
-                    trackingState.isTracking ? 'ON DUTY' : 'OFF DUTY',
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontWeight: FontWeight.bold,
+                    _currentRoute != null ? 'On Route' : 'Available',
+                    style: TextStyle(
+                      color: _currentRoute != null
+                          ? Colors.green.shade700
+                          : Colors.grey.shade700,
+                      fontWeight: FontWeight.w500,
                       fontSize: 12,
                     ),
                   ),
                 ),
               ],
             ),
-            const SizedBox(height: 16),
-            Row(
-              children: [
-                Expanded(
-                  child: _buildStatusItem(
-                    'Location Tracking',
-                    trackingState.isTracking ? 'Active' : 'Inactive',
-                    trackingState.isTracking ? Icons.gps_fixed : Icons.gps_off,
-                    trackingState.isTracking ? Colors.green : Colors.red,
-                  ),
-                ),
-                Expanded(
-                  child: _buildStatusItem(
-                    'Current Status',
-                    _currentRoute != null ? 'On Route' : 'Available',
-                    _currentRoute != null ? Icons.route : Icons.check_circle,
-                    _currentRoute != null ? Colors.blue : Colors.green,
-                  ),
-                ),
-              ],
-            ),
           ],
         ),
-      ),
-    );
-  }
-
-  Widget _buildStatusItem(String label, String value, IconData icon, Color color) {
-    return Container(
-      padding: const EdgeInsets.all(12),
-      margin: const EdgeInsets.symmetric(horizontal: 4),
-      decoration: BoxDecoration(
-        color: Colors.white.withOpacity(0.1),
-        borderRadius: BorderRadius.circular(8),
-      ),
-      child: Column(
-        children: [
-          Icon(icon, color: color, size: 24),
-          const SizedBox(height: 4),
-          Text(
-            value,
-            style: const TextStyle(
-              color: Colors.white,
-              fontWeight: FontWeight.bold,
-              fontSize: 12,
-            ),
-          ),
-          Text(
-            label,
-            style: const TextStyle(
-              color: Colors.white70,
-              fontSize: 10,
-            ),
-            textAlign: TextAlign.center,
-          ),
-        ],
       ),
     );
   }
@@ -390,8 +370,6 @@ class _DriverDashboardScreenState extends ConsumerState<DriverDashboardScreen>
     if (_currentRoute == null) return Container();
 
     return Card(
-      elevation: 2,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
       child: Padding(
         padding: const EdgeInsets.all(16),
         child: Column(
@@ -399,143 +377,56 @@ class _DriverDashboardScreenState extends ConsumerState<DriverDashboardScreen>
           children: [
             Row(
               children: [
-                Container(
-                  padding: const EdgeInsets.all(8),
-                  decoration: BoxDecoration(
-                    color: Color(_currentRoute!.status.colorValue).withOpacity(0.1),
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  child: Icon(
-                    Icons.route,
-                    color: Color(_currentRoute!.status.colorValue),
-                  ),
+                Icon(Icons.route, color: Colors.blue.shade600),
+                const SizedBox(width: 8),
+                const Text(
+                  'Current Route',
+                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
                 ),
-                const SizedBox(width: 12),
+              ],
+            ),
+            const SizedBox(height: 12),
+            Row(
+              children: [
                 Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        'Current Emergency Route',
-                        style: const TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.bold,
-                        ),
+                        'Emergency ID: ${_currentRoute!.emergencyId}',
+                        style: const TextStyle(fontWeight: FontWeight.w500),
                       ),
+                      const SizedBox(height: 4),
                       Text(
-                        _currentRoute!.getStatusDescription('ambulance_driver'),
-                        style: TextStyle(
-                          fontSize: 12,
-                          color: Color(_currentRoute!.status.colorValue),
-                          fontWeight: FontWeight.w500,
-                        ),
+                        'Status: ${_currentRoute!.status.name}',
+                        style: TextStyle(color: Colors.grey.shade600),
                       ),
                     ],
                   ),
                 ),
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                  decoration: BoxDecoration(
-                    color: _currentRoute!.isHighPriority
-                        ? Colors.red.withOpacity(0.1)
-                        : Colors.orange.withOpacity(0.1),
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  child: Text(
-                    _currentRoute!.emergencyPriority.toUpperCase(),
-                    style: TextStyle(
-                      fontSize: 10,
-                      fontWeight: FontWeight.bold,
-                      color: _currentRoute!.isHighPriority ? Colors.red : Colors.orange,
+                Row(
+                  children: [
+                    ElevatedButton.icon(
+                      onPressed: () => _navigateToRoute(),
+                      icon: const Icon(Icons.navigation),
+                      label: const Text('Navigate'),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.blue,
+                        foregroundColor: Colors.white,
+                      ),
                     ),
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 12),
-            Row(
-              children: [
-                Icon(Icons.location_on, size: 16, color: Colors.grey.shade600),
-                const SizedBox(width: 4),
-                Expanded(
-                  child: Text(
-                    _currentRoute!.patientLocation,
-                    style: TextStyle(color: Colors.grey.shade600),
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 8),
-            Row(
-              children: [
-                _buildRouteInfoChip(
-                  icon: Icons.straighten,
-                  label: _currentRoute!.formattedDistance,
-                  color: Colors.blue,
-                ),
-                const SizedBox(width: 8),
-                _buildRouteInfoChip(
-                  icon: Icons.schedule,
-                  label: _currentRoute!.formattedETA,
-                  color: Colors.orange,
-                ),
-              ],
-            ),
-            const SizedBox(height: 12),
-            Row(
-              children: [
-                Expanded(
-                  child: ElevatedButton.icon(
-                    onPressed: () => _navigateToRoute(),
-                    icon: const Icon(Icons.navigation, size: 16),
-                    label: const Text('Navigate'),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: Colors.blue,
-                      foregroundColor: Colors.white,
+                    const SizedBox(width: 8),
+                    OutlinedButton.icon(
+                      onPressed: () => _showRouteDetails(),
+                      icon: const Icon(Icons.info, size: 16),
+                      label: const Text('Details'),
                     ),
-                  ),
-                ),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: OutlinedButton.icon(
-                    onPressed: () => _showRouteDetails(),
-                    icon: const Icon(Icons.info, size: 16),
-                    label: const Text('Details'),
-                  ),
+                  ],
                 ),
               ],
             ),
           ],
         ),
-      ),
-    );
-  }
-
-  Widget _buildRouteInfoChip({
-    required IconData icon,
-    required String label,
-    required Color color,
-  }) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-      decoration: BoxDecoration(
-        color: color.withOpacity(0.1),
-        borderRadius: BorderRadius.circular(12),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(icon, size: 12, color: color),
-          const SizedBox(width: 4),
-          Text(
-            label,
-            style: TextStyle(
-              color: color,
-              fontSize: 12,
-              fontWeight: FontWeight.w500,
-            ),
-          ),
-        ],
       ),
     );
   }
@@ -584,10 +475,12 @@ class _DriverDashboardScreenState extends ConsumerState<DriverDashboardScreen>
             const SizedBox(width: 12),
             Expanded(
               child: _buildActionCard(
-                title: _currentRoute != null ? 'Complete Route' : 'Go Available',
+                title:
+                    _currentRoute != null ? 'Complete Route' : 'Go Available',
                 icon: _currentRoute != null ? Icons.flag : Icons.check_circle,
                 color: Colors.green,
-                onTap: () => _currentRoute != null ? _completeRoute() : _goAvailable(),
+                onTap: () =>
+                    _currentRoute != null ? _completeRoute() : _goAvailable(),
               ),
             ),
           ],
@@ -603,31 +496,19 @@ class _DriverDashboardScreenState extends ConsumerState<DriverDashboardScreen>
     required VoidCallback onTap,
   }) {
     return Card(
-      elevation: 2,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
       child: InkWell(
         onTap: onTap,
-        borderRadius: BorderRadius.circular(12),
-        child: Container(
+        borderRadius: BorderRadius.circular(8),
+        child: Padding(
           padding: const EdgeInsets.all(16),
           child: Column(
             children: [
-              Container(
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  color: color.withOpacity(0.1),
-                  shape: BoxShape.circle,
-                ),
-                child: Icon(icon, color: color, size: 24),
-              ),
+              Icon(icon, color: color, size: 32),
               const SizedBox(height: 8),
               Text(
                 title,
-                style: const TextStyle(
-                  fontWeight: FontWeight.w600,
-                  fontSize: 12,
-                ),
                 textAlign: TextAlign.center,
+                style: const TextStyle(fontWeight: FontWeight.w500),
               ),
             ],
           ),
@@ -636,18 +517,22 @@ class _DriverDashboardScreenState extends ConsumerState<DriverDashboardScreen>
     );
   }
 
-  Widget _buildLocationStatus() {
+  Widget _buildLocationStatusCard() {
     return Card(
-      elevation: 2,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
       child: Padding(
         padding: const EdgeInsets.all(16),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text(
-              'Location Status',
-              style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+            Row(
+              children: [
+                Icon(Icons.location_on, color: Colors.green.shade600),
+                const SizedBox(width: 8),
+                const Text(
+                  'Location Status',
+                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                ),
+              ],
             ),
             const SizedBox(height: 12),
             if (_currentPosition != null) ...[
@@ -659,7 +544,7 @@ class _DriverDashboardScreenState extends ConsumerState<DriverDashboardScreen>
               _buildLocationItem(
                 'Longitude',
                 _currentPosition!.longitude.toStringAsFixed(6),
-                Icons.my_location,
+                Icons.location_on,
               ),
               _buildLocationItem(
                 'Accuracy',
@@ -745,213 +630,66 @@ class _DriverDashboardScreenState extends ConsumerState<DriverDashboardScreen>
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // Route status header
-          _buildRouteStatusHeader(),
+          _buildRouteDetailsCard(),
           const SizedBox(height: 16),
-
-          // Emergency information
-          _buildEmergencyInfo(),
-          const SizedBox(height: 16),
-
-          // Route progress
-          _buildRouteProgress(),
-          const SizedBox(height: 16),
-
-          // Actions
           _buildRouteActions(),
         ],
       ),
     );
   }
 
-  Widget _buildRouteStatusHeader() {
+  Widget _buildRouteDetailsCard() {
     if (_currentRoute == null) return Container();
 
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        gradient: LinearGradient(
-          colors: [
-            Color(_currentRoute!.status.colorValue),
-            Color(_currentRoute!.status.colorValue).withOpacity(0.7),
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'Route Details',
+              style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+            ),
+            const SizedBox(height: 16),
+            _buildRouteInfoRow('Emergency ID', _currentRoute!.emergencyId),
+            _buildRouteInfoRow('Status', _currentRoute!.status.value),
+            _buildRouteInfoRow(
+                'Created', _formatTime(_currentRoute!.createdAt)),
+            if (_currentRoute!.estimatedArrival != null)
+              _buildRouteInfoRow(
+                  'ETA', _formatTime(_currentRoute!.estimatedArrival!)),
+            if (_currentRoute!.patientLocation.isNotEmpty)
+              _buildRouteInfoRow('Destination', _currentRoute!.patientLocation),
           ],
         ),
-        borderRadius: BorderRadius.circular(12),
       ),
-      child: Column(
+    );
+  }
+
+  Widget _buildRouteInfoRow(String label, String value) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(
-            children: [
-              Container(
-                padding: const EdgeInsets.all(8),
-                decoration: BoxDecoration(
-                  color: Colors.white.withOpacity(0.2),
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: Icon(
-                  Icons.route,
-                  color: Colors.white,
-                  size: 24,
-                ),
+          SizedBox(
+            width: 100,
+            child: Text(
+              '$label:',
+              style: TextStyle(
+                fontWeight: FontWeight.w500,
+                color: Colors.grey.shade700,
               ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      _currentRoute!.getStatusDescription('ambulance_driver'),
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 16,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                    Text(
-                      'Emergency Route',
-                      style: const TextStyle(
-                        color: Colors.white70,
-                        fontSize: 12,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                decoration: BoxDecoration(
-                  color: Colors.white.withOpacity(0.2),
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: Text(
-                  _currentRoute!.emergencyPriority.toUpperCase(),
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontWeight: FontWeight.bold,
-                    fontSize: 10,
-                  ),
-                ),
-              ),
-            ],
+            ),
           ),
-          const SizedBox(height: 12),
-          Text(
-            _currentRoute!.patientLocation,
-            style: const TextStyle(
-              color: Colors.white,
-              fontSize: 14,
+          Expanded(
+            child: Text(
+              value,
+              style: const TextStyle(fontWeight: FontWeight.w400),
             ),
           ),
         ],
-      ),
-    );
-  }
-
-  Widget _buildEmergencyInfo() {
-    if (_currentRoute == null) return Container();
-
-    return Card(
-      elevation: 2,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text(
-              'Emergency Information',
-              style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
-            ),
-            const SizedBox(height: 12),
-            _buildInfoRow('Emergency ID', _currentRoute!.emergencyId),
-            _buildInfoRow('Priority', _currentRoute!.emergencyPriority.toUpperCase()),
-            _buildInfoRow('Distance', _currentRoute!.formattedDistance),
-            _buildInfoRow('Estimated Duration', _currentRoute!.formattedDuration),
-            _buildInfoRow('ETA', _currentRoute!.formattedETA),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildRouteProgress() {
-    if (_currentRoute == null) return Container();
-
-    // Calculate progress based on status and time
-    double progress = 0.0;
-    String progressText = 'Starting route...';
-
-    switch (_currentRoute!.status) {
-      case RouteStatus.active:
-        progress = 0.3;
-        progressText = 'En route to emergency...';
-        break;
-      case RouteStatus.cleared:
-        progress = 0.6;
-        progressText = 'Traffic cleared, proceeding...';
-        break;
-      case RouteStatus.timeout:
-        progress = 0.4;
-        progressText = 'Route delayed, seeking alternative...';
-        break;
-      case RouteStatus.completed:
-        progress = 1.0;
-        progressText = 'Route completed';
-        break;
-    }
-
-    return Card(
-      elevation: 2,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text(
-              'Route Progress',
-              style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
-            ),
-            const SizedBox(height: 12),
-            LinearProgressIndicator(
-              value: progress,
-              backgroundColor: Colors.grey.shade300,
-              valueColor: AlwaysStoppedAnimation<Color>(
-                Color(_currentRoute!.status.colorValue),
-              ),
-            ),
-            const SizedBox(height: 8),
-            Text(
-              progressText,
-              style: TextStyle(
-                color: Colors.grey.shade700,
-                fontSize: 14,
-              ),
-            ),
-            const SizedBox(height: 12),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Text(
-                  'Started: ${_formatTime(_currentRoute!.createdAt)}',
-                  style: TextStyle(
-                    fontSize: 12,
-                    color: Colors.grey.shade600,
-                  ),
-                ),
-                if (_currentRoute!.status != RouteStatus.completed)
-                  Text(
-                    'ETA: ${_currentRoute!.formattedETA}',
-                    style: const TextStyle(
-                      fontSize: 12,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-              ],
-            ),
-          ],
-        ),
       ),
     );
   }
@@ -1009,3 +747,728 @@ class _DriverDashboardScreenState extends ConsumerState<DriverDashboardScreen>
           ),
       ],
     );
+  }
+
+  // FIXED: Add missing _buildNavigationTab method
+  Widget _buildNavigationTab() {
+    if (_currentRoute == null) {
+      return Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(
+              Icons.navigation,
+              size: 64,
+              color: Colors.grey.shade400,
+            ),
+            const SizedBox(height: 16),
+            Text(
+              'No Active Route',
+              style: TextStyle(
+                fontSize: 18,
+                fontWeight: FontWeight.w500,
+                color: Colors.grey.shade700,
+              ),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'Navigation will be available when you have an active route',
+              style: TextStyle(color: Colors.grey.shade600),
+              textAlign: TextAlign.center,
+            ),
+          ],
+        ),
+      );
+    }
+
+    return SingleChildScrollView(
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Card(
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Icon(Icons.navigation, color: Colors.blue.shade600),
+                      const SizedBox(width: 8),
+                      const Text(
+                        'Turn-by-Turn Navigation',
+                        style: TextStyle(
+                            fontSize: 18, fontWeight: FontWeight.bold),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 16),
+                  Container(
+                    width: double.infinity,
+                    height: 200,
+                    decoration: BoxDecoration(
+                      color: Colors.grey.shade100,
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(color: Colors.grey.shade300),
+                    ),
+                    child: Center(
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Icon(
+                            Icons.map,
+                            size: 48,
+                            color: Colors.grey.shade500,
+                          ),
+                          const SizedBox(height: 8),
+                          Text(
+                            'Map View Coming Soon',
+                            style: TextStyle(
+                              color: Colors.grey.shade600,
+                              fontSize: 16,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: ElevatedButton.icon(
+                          onPressed: () => _openExternalNavigation(),
+                          icon: const Icon(Icons.open_in_new),
+                          label: const Text('Open in Maps'),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: Colors.green,
+                            foregroundColor: Colors.white,
+                            padding: const EdgeInsets.symmetric(vertical: 12),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: OutlinedButton.icon(
+                          onPressed: () => _shareLocation(),
+                          icon: const Icon(Icons.share_location),
+                          label: const Text('Share Location'),
+                          style: OutlinedButton.styleFrom(
+                            padding: const EdgeInsets.symmetric(vertical: 12),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(height: 16),
+          Card(
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    'Route Progress',
+                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                  ),
+                  const SizedBox(height: 12),
+                  if (_currentPosition != null) ...[
+                    LinearProgressIndicator(
+                      value:
+                          0.3, // This would be calculated based on actual route progress
+                      backgroundColor: Colors.grey.shade300,
+                      valueColor:
+                          AlwaysStoppedAnimation<Color>(Colors.blue.shade600),
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      '30% Complete', // This would be calculated
+                      style: TextStyle(color: Colors.grey.shade600),
+                    ),
+                  ] else ...[
+                    Text(
+                      'Location required for progress tracking',
+                      style: TextStyle(color: Colors.grey.shade600),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // FIXED: Add missing _buildHistoryTab method
+  Widget _buildHistoryTab() {
+    return Column(
+      children: [
+        Container(
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            color: Colors.grey.shade50,
+            border: Border(bottom: BorderSide(color: Colors.grey.shade200)),
+          ),
+          child: Row(
+            children: [
+              Expanded(
+                child: TextField(
+                  decoration: InputDecoration(
+                    hintText: 'Search route history...',
+                    prefixIcon: const Icon(Icons.search),
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(8),
+                      borderSide: BorderSide.none,
+                    ),
+                    filled: true,
+                    fillColor: Colors.white,
+                    contentPadding: const EdgeInsets.symmetric(
+                        horizontal: 16, vertical: 12),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 8),
+              IconButton(
+                onPressed: () => _loadRouteHistory(),
+                icon: const Icon(Icons.refresh),
+                tooltip: 'Refresh',
+              ),
+            ],
+          ),
+        ),
+        Expanded(
+          child: _routeHistory.isEmpty
+              ? Center(
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Icon(
+                        Icons.history,
+                        size: 64,
+                        color: Colors.grey.shade400,
+                      ),
+                      const SizedBox(height: 16),
+                      Text(
+                        'No Route History',
+                        style: TextStyle(
+                          fontSize: 18,
+                          fontWeight: FontWeight.w500,
+                          color: Colors.grey.shade700,
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      Text(
+                        'Your completed routes will appear here',
+                        style: TextStyle(color: Colors.grey.shade600),
+                        textAlign: TextAlign.center,
+                      ),
+                    ],
+                  ),
+                )
+              : ListView.separated(
+                  padding: const EdgeInsets.all(16),
+                  itemCount: _routeHistory.length,
+                  separatorBuilder: (context, index) =>
+                      const SizedBox(height: 8),
+                  itemBuilder: (context, index) {
+                    final route = _routeHistory[index];
+                    return _buildRouteHistoryCard(route);
+                  },
+                ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildRouteHistoryCard(AmbulanceRouteModel route) {
+    return Card(
+      child: ListTile(
+        leading: CircleAvatar(
+          backgroundColor: Colors.green.shade100,
+          child: Icon(
+            Icons.check,
+            color: Colors.green.shade700,
+          ),
+        ),
+        title: Text('Emergency ${route.emergencyId}'),
+        subtitle: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('Completed: ${_formatTime(route.updatedAt)}'),
+            if (route.estimatedArrival != null)
+              Text(
+                  'Duration: ${_calculateDuration(route.createdAt, route.estimatedArrival!)}'),
+          ],
+        ),
+        isThreeLine: true,
+        trailing: IconButton(
+          icon: const Icon(Icons.info_outline),
+          onPressed: () => _showRouteDetailsDialog(route),
+        ),
+        onTap: () => _showRouteDetailsDialog(route),
+      ),
+    );
+  }
+
+  // Action methods
+  void _navigateToRoute() {
+    if (_currentRoute != null) {
+      Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (context) => DriverNavigationScreen(route: _currentRoute!),
+        ),
+      );
+    }
+  }
+
+  void _showRouteDetails() {
+    if (_currentRoute != null) {
+      Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (context) => RouteDetailsScreen(route: _currentRoute!),
+        ),
+      );
+    }
+  }
+
+  void _showRouteDetailsDialog(AmbulanceRouteModel route) {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text('Route Details - ${route.emergencyId}'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            _buildDialogInfoRow('Status', route.status.name),
+            _buildDialogInfoRow('Created', _formatTime(route.createdAt)),
+            _buildDialogInfoRow('Updated', _formatTime(route.updatedAt)),
+            if (route.estimatedArrival != null)
+              _buildDialogInfoRow(
+                  'Completed', _formatTime(route.estimatedArrival!)),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('Close'),
+          ),
+          if (route.status != RouteStatus.completed)
+            ElevatedButton(
+              onPressed: () {
+                Navigator.of(context).pop();
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (context) => RouteDetailsScreen(route: route),
+                  ),
+                );
+              },
+              child: const Text('View Details'),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildDialogInfoRow(String label, String value) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SizedBox(
+            width: 80,
+            child: Text(
+              '$label:',
+              style: const TextStyle(fontWeight: FontWeight.w500),
+            ),
+          ),
+          Expanded(child: Text(value)),
+        ],
+      ),
+    );
+  }
+
+  void _openExternalNavigation() {
+    // This would open external navigation apps like Google Maps
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('Opening external navigation...'),
+        duration: Duration(seconds: 2),
+      ),
+    );
+  }
+
+  void _shareLocation() {
+    if (_currentPosition != null) {
+      // This would share the current location
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            'Location shared: ${_currentPosition!.latitude.toStringAsFixed(6)}, ${_currentPosition!.longitude.toStringAsFixed(6)}',
+          ),
+          duration: const Duration(seconds: 3),
+        ),
+      );
+    }
+  }
+
+  void _callEmergency() {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Emergency Call'),
+        content:
+            const Text('Are you sure you want to call emergency services?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              Navigator.of(context).pop();
+              // Implement actual emergency call functionality
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(content: Text('Calling emergency services...')),
+              );
+            },
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
+            child: const Text('Call', style: TextStyle(color: Colors.white)),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _contactDispatch() {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Contact Dispatch'),
+        content: const Text('Would you like to contact the dispatch center?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              Navigator.of(context).pop();
+              // Implement dispatch contact functionality
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(content: Text('Contacting dispatch...')),
+              );
+            },
+            child: const Text('Contact'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _reportIssue() {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Report Issue'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Text('What type of issue would you like to report?'),
+            const SizedBox(height: 16),
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                ElevatedButton(
+                  onPressed: () {
+                    Navigator.of(context).pop();
+                    _showIssueForm('Vehicle Problem');
+                  },
+                  child: const Text('Vehicle Problem'),
+                ),
+                const SizedBox(height: 8),
+                ElevatedButton(
+                  onPressed: () {
+                    Navigator.of(context).pop();
+                    _showIssueForm('Traffic Issue');
+                  },
+                  child: const Text('Traffic Issue'),
+                ),
+                const SizedBox(height: 8),
+                ElevatedButton(
+                  onPressed: () {
+                    Navigator.of(context).pop();
+                    _showIssueForm('Route Problem');
+                  },
+                  child: const Text('Route Problem'),
+                ),
+                const SizedBox(height: 8),
+                ElevatedButton(
+                  onPressed: () {
+                    Navigator.of(context).pop();
+                    _showIssueForm('Other');
+                  },
+                  child: const Text('Other'),
+                ),
+              ],
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('Cancel'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showIssueForm(String issueType) {
+    final TextEditingController descriptionController = TextEditingController();
+
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text('Report $issueType'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('Issue Type: $issueType'),
+            const SizedBox(height: 16),
+            TextField(
+              controller: descriptionController,
+              decoration: const InputDecoration(
+                labelText: 'Description',
+                hintText: 'Please describe the issue...',
+                border: OutlineInputBorder(),
+              ),
+              maxLines: 3,
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              Navigator.of(context).pop();
+              // Implement issue reporting functionality
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(content: Text('$issueType reported successfully')),
+              );
+            },
+            child: const Text('Submit'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _completeRoute() {
+    if (_currentRoute == null) return;
+
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Complete Route'),
+        content: const Text(
+            'Are you sure you want to mark this route as completed?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () async {
+              Navigator.of(context).pop();
+
+              try {
+                final currentUser = await ref.read(currentUserProvider.future);
+                if (currentUser == null) return;
+
+                // Update route status to completed
+                await ref
+                    .read(routeStatusUpdateProvider.notifier)
+                    .updateRouteStatus(
+                      routeId: _currentRoute!.id,
+                      newStatus: RouteStatus.completed,
+                      policeOfficerId: currentUser.id,
+                      policeOfficerName:
+                          '${currentUser.firstName} ${currentUser.lastName}',
+                      notes: 'Route completed by driver',
+                    );
+
+                setState(() {
+                  _currentRoute = null;
+                });
+
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content: Text('Route completed successfully')),
+                );
+
+                // Refresh route history
+                _loadRouteHistory();
+              } catch (e) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(content: Text('Error completing route: $e')),
+                );
+              }
+            },
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.green),
+            child:
+                const Text('Complete', style: TextStyle(color: Colors.white)),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _goAvailable() {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Go Available'),
+        content:
+            const Text('Mark yourself as available for new emergency routes?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              Navigator.of(context).pop();
+              // Implement go available functionality
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(
+                    content: Text('You are now available for routes')),
+              );
+            },
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.green),
+            child: const Text('Go Available',
+                style: TextStyle(color: Colors.white)),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showNotifications() {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => const NotificationsScreen(),
+      ),
+    );
+  }
+
+  void _showComingSoon(BuildContext context, String feature) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('$feature coming soon!')),
+    );
+  }
+
+  void _showLogoutDialog(BuildContext context, WidgetRef ref) {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Sign Out'),
+        content: const Text('Are you sure you want to sign out?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () async {
+              Navigator.of(context).pop();
+              try {
+                // ✅ Use AuthService directly for sign out
+                final authService = ref.read(authServiceProvider);
+                await authService.signOut();
+              } catch (e) {
+                // Handle sign out error
+                if (mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Text('Error signing out: $e'),
+                      backgroundColor: Colors.red,
+                    ),
+                  );
+                }
+              }
+            },
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
+            child:
+                const Text('Sign Out', style: TextStyle(color: Colors.white)),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // Helper methods
+  String _formatTime(DateTime dateTime) {
+    return '${dateTime.hour.toString().padLeft(2, '0')}:${dateTime.minute.toString().padLeft(2, '0')} ${dateTime.day}/${dateTime.month}/${dateTime.year}';
+  }
+
+  String _calculateDuration(DateTime start, DateTime end) {
+    final duration = end.difference(start);
+    final hours = duration.inHours;
+    final minutes = duration.inMinutes % 60;
+
+    if (hours > 0) {
+      return '${hours}h ${minutes}m';
+    } else {
+      return '${minutes}m';
+    }
+  }
+}
+
+// Create NotificationsScreen if it doesn't exist
+class NotificationsScreen extends StatelessWidget {
+  const NotificationsScreen({Key? key}) : super(key: key);
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Notifications'),
+        backgroundColor: Colors.orange.shade700,
+        foregroundColor: Colors.white,
+      ),
+      body: const Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(Icons.notifications, size: 64, color: Colors.grey),
+            SizedBox(height: 16),
+            Text(
+              'No notifications',
+              style: TextStyle(fontSize: 18, color: Colors.grey),
+            ),
+            SizedBox(height: 8),
+            Text(
+              'You\'ll see important updates here',
+              style: TextStyle(color: Colors.grey),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}

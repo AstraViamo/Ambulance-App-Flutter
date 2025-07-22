@@ -102,7 +102,6 @@ class NotificationService {
       enableVibration: true,
       enableLights: true,
       ledColor: Color.fromARGB(255, 255, 0, 0),
-      sound: RawResourceAndroidNotificationSound('emergency_sound'),
     );
 
     const routeChannel = AndroidNotificationChannel(
@@ -1024,9 +1023,7 @@ class NotificationService {
       channelDescription: _getChannelDescription(channelId),
       importance: type.contains('emergency') ? Importance.max : Importance.high,
       priority: type.contains('emergency') ? Priority.max : Priority.high,
-      sound: type.contains('emergency')
-          ? const RawResourceAndroidNotificationSound('emergency_sound')
-          : null,
+      playSound: true,
       enableVibration: true,
       enableLights: true,
       ledColor: type.contains('emergency')

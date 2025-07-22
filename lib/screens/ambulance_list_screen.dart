@@ -1,12 +1,13 @@
-// lib/screens/ambulance_list_screen.dart
+// lib/screens/ambulance_list_screen.dart - Responsive version
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../models/ambulance_model.dart';
 import '../providers/ambulance_providers.dart';
 import '../providers/auth_provider.dart';
-import '../screens/ambulance_details_screen.dart';
-import '../screens/create_ambulance_screen.dart';
+import 'ambulance_details_screen.dart';
+import 'create_ambulance_screen.dart';
 
 class AmbulanceListScreen extends ConsumerStatefulWidget {
   const AmbulanceListScreen({Key? key}) : super(key: key);
@@ -17,19 +18,13 @@ class AmbulanceListScreen extends ConsumerStatefulWidget {
 }
 
 class _AmbulanceListScreenState extends ConsumerState<AmbulanceListScreen> {
-  final _searchController = TextEditingController();
+  final TextEditingController _searchController = TextEditingController();
   String? hospitalId;
 
   @override
   void initState() {
     super.initState();
     _loadHospitalId();
-  }
-
-  @override
-  void dispose() {
-    _searchController.dispose();
-    super.dispose();
   }
 
   Future<void> _loadHospitalId() async {
@@ -83,6 +78,26 @@ class _AmbulanceListScreenState extends ConsumerState<AmbulanceListScreen> {
     }
   }
 
+  void _navigateToCreateAmbulance() {
+    if (hospitalId != null) {
+      Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (context) => CreateAmbulanceScreen(hospitalId: hospitalId!),
+        ),
+      );
+    }
+  }
+
+  void _navigateToAmbulanceDetails(AmbulanceModel ambulance) {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => AmbulanceDetailsScreen(ambulance: ambulance),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     if (hospitalId == null) {
@@ -128,7 +143,7 @@ class _AmbulanceListScreenState extends ConsumerState<AmbulanceListScreen> {
             IconButton(
               icon: const Icon(Icons.add, color: Colors.white),
               onPressed: () {
-                print('Add button in AppBar clicked'); // Debug log
+                print('Add button in AppBar clicked');
                 _navigateToCreateAmbulance();
               },
               tooltip: 'Add New Ambulance',
@@ -166,13 +181,14 @@ class _AmbulanceListScreenState extends ConsumerState<AmbulanceListScreen> {
       ),
       body: Column(
         children: [
-          // Statistics cards
+          // Statistics cards - RESPONSIVE
           ambulanceStats.when(
-            data: (stats) => _buildStatsSection(stats),
-            loading: () => const SizedBox(
-                height: 120, child: Center(child: CircularProgressIndicator())),
+            data: (stats) => _buildResponsiveStatsSection(stats),
+            loading: () => SizedBox(
+                height: _getStatsHeight(context),
+                child: const Center(child: CircularProgressIndicator())),
             error: (error, stack) => Container(
-              height: 120,
+              height: _getStatsHeight(context),
               padding: const EdgeInsets.all(16),
               child: Center(
                 child: Text('Error loading stats: $error',
@@ -181,9 +197,12 @@ class _AmbulanceListScreenState extends ConsumerState<AmbulanceListScreen> {
             ),
           ),
 
-          // Search bar
+          // Search bar - RESPONSIVE
           Padding(
-            padding: const EdgeInsets.all(16),
+            padding: EdgeInsets.symmetric(
+              horizontal: _getHorizontalPadding(context),
+              vertical: 16,
+            ),
             child: TextField(
               controller: _searchController,
               decoration: InputDecoration(
@@ -214,7 +233,10 @@ class _AmbulanceListScreenState extends ConsumerState<AmbulanceListScreen> {
           // Error message
           if (error != null)
             Container(
-              margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+              margin: EdgeInsets.symmetric(
+                horizontal: _getHorizontalPadding(context),
+                vertical: 8,
+              ),
               padding: const EdgeInsets.all(12),
               decoration: BoxDecoration(
                 color: Colors.red.shade50,
@@ -237,14 +259,14 @@ class _AmbulanceListScreenState extends ConsumerState<AmbulanceListScreen> {
               ),
             ),
 
-          // Ambulance list
+          // Ambulance list - RESPONSIVE
           Expanded(
             child: ambulancesAsync.when(
               data: (ambulances) {
                 if (ambulances.isEmpty) {
                   return _buildEmptyState();
                 }
-                return _buildAmbulanceList(ambulances, isLoading);
+                return _buildResponsiveAmbulanceList(ambulances, isLoading);
               },
               loading: () => const Center(child: CircularProgressIndicator()),
               error: (error, stack) => Center(
@@ -271,7 +293,7 @@ class _AmbulanceListScreenState extends ConsumerState<AmbulanceListScreen> {
       floatingActionButton: hospitalId != null
           ? FloatingActionButton(
               onPressed: () {
-                print('FloatingActionButton clicked'); // Debug log
+                print('FloatingActionButton clicked');
                 _navigateToCreateAmbulance();
               },
               backgroundColor: Colors.blue.shade700,
@@ -282,62 +304,384 @@ class _AmbulanceListScreenState extends ConsumerState<AmbulanceListScreen> {
     );
   }
 
-  Widget _buildStatsSection(Map<String, int> stats) {
-    return Container(
-      height: 120,
-      padding: const EdgeInsets.all(16),
-      child: Row(
-        children: [
-          _buildStatCard('Total', stats['total'] ?? 0, Colors.blue.shade700,
-              Icons.local_shipping),
-          const SizedBox(width: 12),
-          _buildStatCard('Available', stats['available'] ?? 0,
-              Colors.green.shade700, Icons.check_circle),
-          const SizedBox(width: 12),
-          _buildStatCard('On Duty', stats['onDuty'] ?? 0,
-              Colors.orange.shade700, Icons.emergency),
-          const SizedBox(width: 12),
-          _buildStatCard('Maintenance', stats['maintenance'] ?? 0,
-              Colors.red.shade700, Icons.build),
-        ],
+  // RESPONSIVE HELPER METHODS
+  double _getHorizontalPadding(BuildContext context) {
+    final screenWidth = MediaQuery.of(context).size.width;
+    if (screenWidth < 360) return 12.0; // Very small phones
+    if (screenWidth < 400) return 14.0; // Small phones
+    return 16.0; // Normal and larger phones
+  }
+
+  double _getStatsHeight(BuildContext context) {
+    final screenWidth = MediaQuery.of(context).size.width;
+    if (screenWidth < 360) return 110.0; // Very small phones
+    if (screenWidth < 400) return 115.0; // Small phones
+    return 120.0; // Normal and larger phones
+  }
+
+  double _getStatsFontSize(BuildContext context, {bool isValue = false}) {
+    final screenWidth = MediaQuery.of(context).size.width;
+    if (isValue) {
+      if (screenWidth < 360) return 14.0; // Very small phones
+      if (screenWidth < 400) return 16.0; // Small phones
+      return 18.0; // Normal and larger phones
+    } else {
+      if (screenWidth < 360) return 8.0; // Very small phones
+      if (screenWidth < 400) return 9.0; // Small phones
+      return 10.0; // Normal and larger phones
+    }
+  }
+
+  double _getStatsIconSize(BuildContext context) {
+    final screenWidth = MediaQuery.of(context).size.width;
+    if (screenWidth < 360) return 20.0; // Very small phones
+    if (screenWidth < 400) return 22.0; // Small phones
+    return 24.0; // Normal and larger phones
+  }
+
+  // RESPONSIVE STATS SECTION
+  Widget _buildResponsiveStatsSection(Map<String, int> stats) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final screenWidth = constraints.maxWidth;
+
+        // For very small screens, show stats in 2x2 grid
+        if (screenWidth < 360) {
+          return Container(
+            height:
+                _getStatsHeight(context) * 2 + 16, // Double height + padding
+            padding: EdgeInsets.all(_getHorizontalPadding(context)),
+            child: Column(
+              children: [
+                Expanded(
+                  child: Row(
+                    children: [
+                      _buildResponsiveStatCard('Total', stats['total'] ?? 0,
+                          Colors.blue.shade700, Icons.local_shipping),
+                      SizedBox(width: _getHorizontalPadding(context)),
+                      _buildResponsiveStatCard(
+                          'Available',
+                          stats['available'] ?? 0,
+                          Colors.green.shade700,
+                          Icons.check_circle),
+                    ],
+                  ),
+                ),
+                SizedBox(height: _getHorizontalPadding(context)),
+                Expanded(
+                  child: Row(
+                    children: [
+                      _buildResponsiveStatCard('On Duty', stats['onDuty'] ?? 0,
+                          Colors.orange.shade700, Icons.emergency),
+                      SizedBox(width: _getHorizontalPadding(context)),
+                      _buildResponsiveStatCard(
+                          'Maintenance',
+                          stats['maintenance'] ?? 0,
+                          Colors.red.shade700,
+                          Icons.build),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          );
+        }
+
+        // For normal screens, show all in one row
+        return Container(
+          height: _getStatsHeight(context),
+          padding: EdgeInsets.all(_getHorizontalPadding(context)),
+          child: Row(
+            children: [
+              _buildResponsiveStatCard('Total', stats['total'] ?? 0,
+                  Colors.blue.shade700, Icons.local_shipping),
+              SizedBox(width: _getHorizontalPadding(context)),
+              _buildResponsiveStatCard('Available', stats['available'] ?? 0,
+                  Colors.green.shade700, Icons.check_circle),
+              SizedBox(width: _getHorizontalPadding(context)),
+              _buildResponsiveStatCard('On Duty', stats['onDuty'] ?? 0,
+                  Colors.orange.shade700, Icons.emergency),
+              SizedBox(width: _getHorizontalPadding(context)),
+              _buildResponsiveStatCard('Maintenance', stats['maintenance'] ?? 0,
+                  Colors.red.shade700, Icons.build),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  // RESPONSIVE STAT CARD
+  Widget _buildResponsiveStatCard(
+      String label, int value, Color color, IconData icon) {
+    return Expanded(
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          return Container(
+            padding: EdgeInsets.all(constraints.maxWidth < 80 ? 8.0 : 12.0),
+            decoration: BoxDecoration(
+              color: color.withOpacity(0.1),
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: color.withOpacity(0.2)),
+            ),
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(icon, color: color, size: _getStatsIconSize(context)),
+                const SizedBox(height: 4),
+                FittedBox(
+                  fit: BoxFit.scaleDown,
+                  child: Text(
+                    value.toString(),
+                    style: TextStyle(
+                      fontSize: _getStatsFontSize(context, isValue: true),
+                      fontWeight: FontWeight.bold,
+                      color: color,
+                    ),
+                  ),
+                ),
+                FittedBox(
+                  fit: BoxFit.scaleDown,
+                  child: Text(
+                    label,
+                    style: TextStyle(
+                      fontSize: _getStatsFontSize(context),
+                      color: color,
+                      fontWeight: FontWeight.w500,
+                    ),
+                    textAlign: TextAlign.center,
+                    maxLines: 1,
+                  ),
+                ),
+              ],
+            ),
+          );
+        },
       ),
     );
   }
 
-  Widget _buildStatCard(String label, int value, Color color, IconData icon) {
-    return Expanded(
-      child: Container(
-        padding: const EdgeInsets.all(12),
-        decoration: BoxDecoration(
-          color: color.withOpacity(0.1),
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: color.withOpacity(0.2)),
-        ),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(icon, color: color, size: 24),
-            const SizedBox(height: 4),
-            Text(
-              value.toString(),
-              style: TextStyle(
-                fontSize: 18,
-                fontWeight: FontWeight.bold,
-                color: color,
+  // RESPONSIVE AMBULANCE LIST
+  Widget _buildResponsiveAmbulanceList(
+      List<AmbulanceModel> ambulances, bool isLoading) {
+    return RefreshIndicator(
+      onRefresh: () async {
+        ref.refresh(ambulancesProvider(hospitalId!));
+      },
+      child: ListView.builder(
+        padding:
+            EdgeInsets.symmetric(horizontal: _getHorizontalPadding(context)),
+        itemCount: ambulances.length,
+        itemBuilder: (context, index) {
+          final ambulance = ambulances[index];
+          return _buildResponsiveAmbulanceCard(ambulance, isLoading);
+        },
+      ),
+    );
+  }
+
+  // RESPONSIVE AMBULANCE CARD
+  Widget _buildResponsiveAmbulanceCard(
+      AmbulanceModel ambulance, bool isLoading) {
+    final statusColor = Color(AmbulanceStatus.getStatusColor(ambulance.status));
+
+    return Card(
+      margin: const EdgeInsets.only(bottom: 12),
+      elevation: 2,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      child: InkWell(
+        onTap: () => _navigateToAmbulanceDetails(ambulance),
+        borderRadius: BorderRadius.circular(12),
+        child: Padding(
+          padding: EdgeInsets.all(_getHorizontalPadding(context)),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // Header row - RESPONSIVE
+              Row(
+                children: [
+                  Container(
+                    padding: const EdgeInsets.all(8),
+                    decoration: BoxDecoration(
+                      color: statusColor.withOpacity(0.1),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Icon(
+                      Icons.local_shipping,
+                      color: statusColor,
+                      size: _getStatsIconSize(context),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        // License plate - RESPONSIVE with overflow protection
+                        Text(
+                          ambulance.licensePlate,
+                          style: TextStyle(
+                            fontSize: _getLicensePlateFontSize(context),
+                            fontWeight: FontWeight.bold,
+                          ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                        const SizedBox(height: 4),
+                        // Model - RESPONSIVE with overflow protection
+                        Text(
+                          ambulance.model,
+                          style: TextStyle(
+                            fontSize: _getModelFontSize(context),
+                            color: Colors.grey.shade600,
+                          ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ],
+                    ),
+                  ),
+                  // Status badge - RESPONSIVE
+                  _buildResponsiveStatusBadge(
+                      ambulance.statusDisplayName, statusColor),
+                ],
               ),
-            ),
-            Text(
-              label,
-              style: TextStyle(
-                fontSize: 10,
-                color: color,
-                fontWeight: FontWeight.w500,
+
+              const SizedBox(height: 12),
+
+              // Driver info - RESPONSIVE
+              Row(
+                children: [
+                  Icon(Icons.person, size: 16, color: Colors.grey.shade600),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      ambulance.currentDriverId ?? 'No driver assigned',
+                      style: TextStyle(
+                        fontSize: _getDriverFontSize(context),
+                        fontWeight: ambulance.currentDriverId != null
+                            ? FontWeight.w500
+                            : FontWeight.normal,
+                        color: ambulance.currentDriverId != null
+                            ? Colors.grey.shade700
+                            : Colors.grey.shade500,
+                      ),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                ],
               ),
-            ),
-          ],
+
+              const SizedBox(height: 8),
+
+              // Last updated - RESPONSIVE
+              Row(
+                children: [
+                  Icon(Icons.access_time,
+                      size: 14, color: Colors.grey.shade500),
+                  const SizedBox(width: 6),
+                  Expanded(
+                    child: Text(
+                      'Updated ${_getTimeAgo(ambulance.updatedAt)}',
+                      style: TextStyle(
+                        fontSize: _getTimeFontSize(context),
+                        color: Colors.grey.shade500,
+                      ),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
         ),
       ),
     );
+  }
+
+  // RESPONSIVE STATUS BADGE
+  Widget _buildResponsiveStatusBadge(String status, Color color) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        return Container(
+          padding: EdgeInsets.symmetric(
+            horizontal: constraints.maxWidth < 100 ? 6.0 : 8.0,
+            vertical: 4.0,
+          ),
+          decoration: BoxDecoration(
+            color: color.withOpacity(0.1),
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: color.withOpacity(0.3)),
+          ),
+          child: FittedBox(
+            fit: BoxFit.scaleDown,
+            child: Text(
+              status,
+              style: TextStyle(
+                fontSize: _getStatusFontSize(context),
+                fontWeight: FontWeight.w600,
+                color: color,
+              ),
+              maxLines: 1,
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  // RESPONSIVE FONT SIZE HELPERS
+  double _getLicensePlateFontSize(BuildContext context) {
+    final screenWidth = MediaQuery.of(context).size.width;
+    if (screenWidth < 360) return 14.0; // Very small phones
+    if (screenWidth < 400) return 15.0; // Small phones
+    return 16.0; // Normal and larger phones
+  }
+
+  double _getModelFontSize(BuildContext context) {
+    final screenWidth = MediaQuery.of(context).size.width;
+    if (screenWidth < 360) return 12.0; // Very small phones
+    if (screenWidth < 400) return 13.0; // Small phones
+    return 14.0; // Normal and larger phones
+  }
+
+  double _getDriverFontSize(BuildContext context) {
+    final screenWidth = MediaQuery.of(context).size.width;
+    if (screenWidth < 360) return 12.0; // Very small phones
+    if (screenWidth < 400) return 13.0; // Small phones
+    return 14.0; // Normal and larger phones
+  }
+
+  double _getTimeFontSize(BuildContext context) {
+    final screenWidth = MediaQuery.of(context).size.width;
+    if (screenWidth < 360) return 10.0; // Very small phones
+    if (screenWidth < 400) return 11.0; // Small phones
+    return 12.0; // Normal and larger phones
+  }
+
+  double _getStatusFontSize(BuildContext context) {
+    final screenWidth = MediaQuery.of(context).size.width;
+    if (screenWidth < 360) return 10.0; // Very small phones
+    if (screenWidth < 400) return 11.0; // Small phones
+    return 12.0; // Normal and larger phones
+  }
+
+  // HELPER METHODS
+  String _getTimeAgo(DateTime dateTime) {
+    final now = DateTime.now();
+    final difference = now.difference(dateTime);
+
+    if (difference.inMinutes < 1) {
+      return 'just now';
+    } else if (difference.inMinutes < 60) {
+      return '${difference.inMinutes}m ago';
+    } else if (difference.inHours < 24) {
+      return '${difference.inHours}h ago';
+    } else {
+      return '${difference.inDays}d ago';
+    }
   }
 
   Widget _buildEmptyState() {
@@ -354,11 +698,13 @@ class _AmbulanceListScreenState extends ConsumerState<AmbulanceListScreen> {
           ),
           const SizedBox(height: 16),
           Text(
-            query.isEmpty ? 'No ambulances yet' : 'No ambulances found',
-            style: TextStyle(
+            query.isEmpty
+                ? 'No ambulances found'
+                : 'No ambulances match your search',
+            style: const TextStyle(
               fontSize: 18,
               fontWeight: FontWeight.w500,
-              color: Colors.grey.shade600,
+              color: Colors.grey,
             ),
           ),
           const SizedBox(height: 8),
@@ -366,334 +712,28 @@ class _AmbulanceListScreenState extends ConsumerState<AmbulanceListScreen> {
             query.isEmpty
                 ? 'Add your first ambulance to get started'
                 : 'Try adjusting your search terms',
-            style: TextStyle(color: Colors.grey.shade500),
+            style: TextStyle(
+              fontSize: 14,
+              color: Colors.grey.shade600,
+            ),
+            textAlign: TextAlign.center,
           ),
           if (query.isEmpty) ...[
             const SizedBox(height: 24),
             ElevatedButton.icon(
-              onPressed: () {
-                print('Empty state add button clicked'); // Debug log
-                _navigateToCreateAmbulance();
-              },
+              onPressed: _navigateToCreateAmbulance,
               icon: const Icon(Icons.add),
               label: const Text('Add Ambulance'),
               style: ElevatedButton.styleFrom(
                 backgroundColor: Colors.blue.shade700,
                 foregroundColor: Colors.white,
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 24,
+                  vertical: 12,
+                ),
               ),
             ),
           ],
-        ],
-      ),
-    );
-  }
-
-  Widget _buildAmbulanceList(List<AmbulanceModel> ambulances, bool isLoading) {
-    return RefreshIndicator(
-      onRefresh: () async {
-        ref.refresh(ambulancesProvider(hospitalId!));
-      },
-      child: ListView.builder(
-        padding: const EdgeInsets.symmetric(horizontal: 16),
-        itemCount: ambulances.length,
-        itemBuilder: (context, index) {
-          final ambulance = ambulances[index];
-          return _buildAmbulanceCard(ambulance, isLoading);
-        },
-      ),
-    );
-  }
-
-  Widget _buildAmbulanceCard(AmbulanceModel ambulance, bool isLoading) {
-    final statusColor = Color(AmbulanceStatus.getStatusColor(ambulance.status));
-
-    return Card(
-      margin: const EdgeInsets.only(bottom: 12),
-      elevation: 2,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-      child: InkWell(
-        onTap: () => _navigateToAmbulanceDetails(ambulance),
-        borderRadius: BorderRadius.circular(12),
-        child: Padding(
-          padding: const EdgeInsets.all(16),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              // Header row
-              Row(
-                children: [
-                  Container(
-                    padding: const EdgeInsets.all(8),
-                    decoration: BoxDecoration(
-                      color: statusColor.withOpacity(0.1),
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                    child: Icon(
-                      Icons.local_shipping,
-                      color: statusColor,
-                      size: 24,
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          ambulance.licensePlate,
-                          style: const TextStyle(
-                            fontSize: 18,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                        Text(
-                          ambulance.model,
-                          style: TextStyle(
-                            fontSize: 14,
-                            color: Colors.grey.shade600,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                  Container(
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                    decoration: BoxDecoration(
-                      color: statusColor,
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    child: Text(
-                      ambulance.statusDisplayName,
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 12,
-                        fontWeight: FontWeight.w500,
-                      ),
-                    ),
-                  ),
-                  PopupMenuButton<String>(
-                    enabled: !isLoading,
-                    onSelected: (value) =>
-                        _handleAmbulanceAction(value, ambulance),
-                    itemBuilder: (context) => [
-                      const PopupMenuItem(
-                          value: 'view', child: Text('View Details')),
-                      const PopupMenuItem(value: 'edit', child: Text('Edit')),
-                      if (ambulance.status != AmbulanceStatus.onDuty) ...[
-                        PopupMenuItem(
-                          value: 'status',
-                          child: Text('Change Status'),
-                        ),
-                        const PopupMenuItem(
-                            value: 'delete', child: Text('Delete')),
-                      ],
-                    ],
-                  ),
-                ],
-              ),
-
-              const SizedBox(height: 12),
-
-              // Details row
-              Row(
-                children: [
-                  if (ambulance.hasDriver) ...[
-                    Icon(Icons.person, size: 16, color: Colors.green.shade600),
-                    const SizedBox(width: 4),
-                    Text(
-                      'Driver Assigned',
-                      style: TextStyle(
-                        fontSize: 12,
-                        color: Colors.green.shade600,
-                        fontWeight: FontWeight.w500,
-                      ),
-                    ),
-                  ] else ...[
-                    Icon(Icons.person_off,
-                        size: 16, color: Colors.grey.shade500),
-                    const SizedBox(width: 4),
-                    Text(
-                      'No Driver',
-                      style: TextStyle(
-                        fontSize: 12,
-                        color: Colors.grey.shade500,
-                      ),
-                    ),
-                  ],
-                  const SizedBox(width: 16),
-                  Icon(Icons.access_time,
-                      size: 16, color: Colors.grey.shade500),
-                  const SizedBox(width: 4),
-                  Text(
-                    'Updated ${_getTimeAgo(ambulance.updatedAt)}',
-                    style: TextStyle(
-                      fontSize: 12,
-                      color: Colors.grey.shade500,
-                    ),
-                  ),
-                ],
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  String _getTimeAgo(DateTime dateTime) {
-    final now = DateTime.now();
-    final difference = now.difference(dateTime);
-
-    if (difference.inMinutes < 1) {
-      return 'now';
-    } else if (difference.inMinutes < 60) {
-      return '${difference.inMinutes}m ago';
-    } else if (difference.inHours < 24) {
-      return '${difference.inHours}h ago';
-    } else {
-      return '${difference.inDays}d ago';
-    }
-  }
-
-  void _handleAmbulanceAction(String action, AmbulanceModel ambulance) {
-    switch (action) {
-      case 'view':
-        _navigateToAmbulanceDetails(ambulance);
-        break;
-      case 'edit':
-        _navigateToEditAmbulance(ambulance);
-        break;
-      case 'status':
-        _showStatusDialog(ambulance);
-        break;
-      case 'delete':
-        _showDeleteDialog(ambulance);
-        break;
-    }
-  }
-
-  void _navigateToCreateAmbulance() {
-    print('Navigate to create ambulance clicked'); // Debug log
-    print('Hospital ID: $hospitalId'); // Debug log
-
-    if (hospitalId == null || hospitalId!.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text(
-              'Error: Hospital ID not found. Please try logging in again.'),
-          backgroundColor: Colors.red,
-        ),
-      );
-      return;
-    }
-
-    try {
-      Navigator.push(
-        context,
-        MaterialPageRoute(
-          builder: (context) => CreateAmbulanceScreen(hospitalId: hospitalId!),
-        ),
-      ).then((result) {
-        print('Returned from create ambulance screen'); // Debug log
-        // Refresh the list if ambulance was created
-        if (result == true) {
-          ref.refresh(ambulancesProvider(hospitalId!));
-        }
-      });
-    } catch (e) {
-      print('Error navigating to create ambulance: $e'); // Debug log
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Error opening create screen: $e'),
-          backgroundColor: Colors.red,
-        ),
-      );
-    }
-  }
-
-  void _navigateToEditAmbulance(AmbulanceModel ambulance) {
-    Navigator.push(
-      context,
-      MaterialPageRoute(
-        builder: (context) => CreateAmbulanceScreen(
-          hospitalId: hospitalId!,
-          ambulanceToEdit: ambulance,
-        ),
-      ),
-    );
-  }
-
-  void _navigateToAmbulanceDetails(AmbulanceModel ambulance) {
-    Navigator.push(
-      context,
-      MaterialPageRoute(
-        builder: (context) => AmbulanceDetailsScreen(ambulance: ambulance),
-      ),
-    );
-  }
-
-  void _showStatusDialog(AmbulanceModel ambulance) {
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: Text('Change Status for ${ambulance.licensePlate}'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: AmbulanceStatus.values.map((status) {
-            return ListTile(
-              leading: Icon(
-                Icons.circle,
-                color: Color(AmbulanceStatus.getStatusColor(status)),
-              ),
-              title: Text(status.displayName),
-              onTap: () async {
-                Navigator.pop(context);
-                final actions = ref.read(ambulanceActionsProvider);
-                final success =
-                    await actions.updateStatus(ambulance.id, status);
-                if (success && mounted) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(
-                        content:
-                            Text('Status updated to ${status.displayName}')),
-                  );
-                }
-              },
-            );
-          }).toList(),
-        ),
-      ),
-    );
-  }
-
-  void _showDeleteDialog(AmbulanceModel ambulance) {
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Delete Ambulance'),
-        content: Text(
-            'Are you sure you want to delete ${ambulance.licensePlate}? This action cannot be undone.'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Cancel'),
-          ),
-          ElevatedButton(
-            onPressed: () async {
-              Navigator.pop(context);
-              final actions = ref.read(ambulanceActionsProvider);
-              final success = await actions.deleteAmbulance(ambulance.id);
-              if (success && mounted) {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(
-                      content: Text('Ambulance deleted successfully')),
-                );
-              }
-            },
-            style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
-            child: const Text('Delete', style: TextStyle(color: Colors.white)),
-          ),
         ],
       ),
     );

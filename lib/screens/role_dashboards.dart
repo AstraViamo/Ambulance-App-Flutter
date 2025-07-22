@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../models/user_model.dart';
 import '../providers/auth_provider.dart';
 import 'driver_dashboard_screen.dart';
+import 'hospital_dashboard.dart' as hospital_dashboard;
 import 'login_screen.dart';
 import 'police_dashboard_screen.dart';
 
@@ -14,7 +15,7 @@ class HospitalAdminDashboard extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    return const HospitalDashboard(); // Fixed: Use correct class name
+    return const hospital_dashboard.HospitalDashboard();
   }
 }
 
@@ -26,7 +27,8 @@ class HospitalDashboard extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    return const HospitalDashboard(); // Fixed: Use correct class name
+    return const hospital_dashboard
+        .HospitalDashboard(); // Fixed: Use correct class name
   }
 }
 

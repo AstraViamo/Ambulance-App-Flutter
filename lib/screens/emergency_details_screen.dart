@@ -1,4 +1,10 @@
-// lib/screens/emergency_details_screen.dart
+// Complete Emergency Details Screen with all modules integrated
+// Replace your lib/screens/emergency_details_screen.dart file with this version
+
+// =============================================================================
+// MODULE 4: FINAL INTEGRATION - COMPLETE EMERGENCY DETAILS SCREEN
+// =============================================================================
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -25,7 +31,7 @@ class _EmergencyDetailsScreenState
   @override
   void initState() {
     super.initState();
-    // Clear any previous assignment state
+    // Initialize assignment state
     WidgetsBinding.instance.addPostFrameCallback((_) {
       ref.read(emergencyAssignmentProvider.notifier).clearAssignment();
     });
@@ -34,15 +40,38 @@ class _EmergencyDetailsScreenState
   @override
   Widget build(BuildContext context) {
     final assignmentState = ref.watch(emergencyAssignmentProvider);
-    final isLoading = assignmentState.isLoading;
     final priorityColor = Color(widget.emergency.priority.colorValue);
+
+    // Listen for state changes and show notifications
+    ref.listen<EmergencyAssignmentState>(emergencyAssignmentProvider,
+        (previous, next) {
+      if (next.error != null && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(next.error!),
+            backgroundColor: Colors.red,
+            duration: const Duration(seconds: 4),
+          ),
+        );
+      }
+
+      if (next.isSuccess && next.isAssigned && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+                '🚑 Ambulance assigned successfully!\n📍 Route has been created'),
+            backgroundColor: Colors.green,
+            duration: Duration(seconds: 3),
+          ),
+        );
+      }
+    });
 
     return Scaffold(
       appBar: AppBar(
-        title: Text(
+        title: const Text(
           'Emergency Details',
-          style:
-              const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+          style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
         ),
         backgroundColor: priorityColor,
         iconTheme: const IconThemeData(color: Colors.white),
@@ -74,13 +103,10 @@ class _EmergencyDetailsScreenState
                 const PopupMenuItem(
                     value: 'find_ambulance', child: Text('Find Ambulance')),
                 const PopupMenuItem(
-                    value: 'auto_assign', child: Text('Auto-Assign Nearest')),
+                    value: 'auto_assign', child: Text('Auto-Assign')),
               ],
-              if (widget.emergency.isAssigned &&
-                  widget.emergency.status != EmergencyStatus.completed) ...[
-                const PopupMenuItem(
-                    value: 'complete', child: Text('Mark Complete')),
-              ],
+              if (widget.emergency.isAssigned && !widget.emergency.isCompleted)
+                const PopupMenuItem(value: 'complete', child: Text('Complete')),
               const PopupMenuItem(value: 'delete', child: Text('Delete')),
             ],
           ),
@@ -89,7 +115,7 @@ class _EmergencyDetailsScreenState
       body: SingleChildScrollView(
         child: Column(
           children: [
-            // Header Section
+            // Header Section with Emergency Summary
             Container(
               width: double.infinity,
               padding: const EdgeInsets.all(24),
@@ -105,29 +131,14 @@ class _EmergencyDetailsScreenState
               ),
               child: Column(
                 children: [
-                  Container(
-                    width: 80,
-                    height: 80,
-                    decoration: BoxDecoration(
-                      color: Colors.white,
-                      borderRadius: BorderRadius.circular(20),
-                      boxShadow: [
-                        BoxShadow(
-                          color: Colors.black.withOpacity(0.1),
-                          blurRadius: 10,
-                          offset: const Offset(0, 5),
-                        ),
-                      ],
-                    ),
-                    child: Icon(
-                      Icons.emergency,
-                      size: 40,
-                      color: priorityColor,
-                    ),
+                  Icon(
+                    Icons.emergency,
+                    size: 48,
+                    color: Colors.white,
                   ),
-                  const SizedBox(height: 16),
+                  const SizedBox(height: 12),
                   Text(
-                    widget.emergency.priorityDisplayName.toUpperCase(),
+                    widget.emergency.priorityBadge,
                     style: const TextStyle(
                       color: Colors.white,
                       fontSize: 24,
@@ -186,8 +197,6 @@ class _EmergencyDetailsScreenState
                     ],
                   ),
 
-                  const SizedBox(height: 16),
-
                   // Emergency Details Card
                   _buildInfoCard(
                     title: 'Emergency Details',
@@ -207,8 +216,6 @@ class _EmergencyDetailsScreenState
                     ],
                   ),
 
-                  const SizedBox(height: 16),
-
                   // Location Information Card
                   _buildInfoCard(
                     title: 'Patient Location',
@@ -218,25 +225,25 @@ class _EmergencyDetailsScreenState
                           'Address',
                           widget.emergency.patientAddressString,
                           Icons.location_on),
-                      _buildInfoRow(
-                          'Coordinates',
-                          '${widget.emergency.patientLat.toStringAsFixed(6)}, ${widget.emergency.patientLng.toStringAsFixed(6)}',
-                          Icons.gps_fixed),
+                      _buildInfoRow('Coordinates',
+                          widget.emergency.coordinatesString, Icons.gps_fixed),
                     ],
                   ),
-
-                  const SizedBox(height: 16),
 
                   // Ambulance Assignment Card
                   _buildInfoCard(
                     title: 'Ambulance Assignment',
                     icon: Icons.local_shipping,
+                    headerColor: widget.emergency.isAssigned
+                        ? Colors.green.shade700
+                        : Colors.orange.shade700,
                     children: [
                       if (widget.emergency.isAssigned) ...[
                         _buildInfoRow(
                             'Ambulance ID',
                             widget.emergency.assignedAmbulanceId ?? 'Unknown',
-                            Icons.local_shipping),
+                            Icons.local_shipping,
+                            statusColor: Colors.green.shade700),
                         _buildInfoRow(
                             'Driver ID',
                             widget.emergency.assignedDriverId ?? 'Unknown',
@@ -249,132 +256,160 @@ class _EmergencyDetailsScreenState
                           _buildInfoRow(
                             'Estimated Arrival',
                             _formatDateTime(widget.emergency.estimatedArrival!),
-                            Icons.schedule,
+                            Icons.timer,
+                            statusColor: widget.emergency.isOverdue
+                                ? Colors.red.shade700
+                                : Colors.orange.shade700,
                           ),
                         if (widget.emergency.actualArrival != null)
                           _buildInfoRow(
                             'Actual Arrival',
                             _formatDateTime(widget.emergency.actualArrival!),
                             Icons.check_circle,
-                            statusColor: Colors.green,
+                            statusColor: Colors.green.shade700,
                           ),
                       ] else ...[
-                        _buildInfoRow(
-                            'Status', 'No ambulance assigned', Icons.warning,
-                            statusColor: Colors.orange),
-                        const SizedBox(height: 8),
-                        if (!isLoading &&
-                            assignmentState.nearestAmbulance == null)
-                          SizedBox(
-                            width: double.infinity,
-                            child: ElevatedButton.icon(
-                              onPressed: _findNearestAmbulance,
-                              icon: const Icon(Icons.search),
-                              label: const Text('Find Nearest Ambulance'),
-                              style: ElevatedButton.styleFrom(
-                                backgroundColor: Colors.blue.shade700,
-                                foregroundColor: Colors.white,
-                              ),
-                            ),
+                        Container(
+                          width: double.infinity,
+                          padding: const EdgeInsets.all(16),
+                          decoration: BoxDecoration(
+                            color: Colors.orange.shade50,
+                            borderRadius: BorderRadius.circular(8),
+                            border: Border.all(color: Colors.orange.shade200),
                           ),
+                          child: Column(
+                            children: [
+                              Icon(Icons.warning_amber,
+                                  color: Colors.orange.shade700, size: 32),
+                              const SizedBox(height: 8),
+                              Text(
+                                'No Ambulance Assigned',
+                                style: TextStyle(
+                                  fontWeight: FontWeight.bold,
+                                  color: Colors.orange.shade700,
+                                  fontSize: 16,
+                                ),
+                              ),
+                              const SizedBox(height: 4),
+                              Text(
+                                'Please assign an ambulance to respond to this emergency',
+                                style: TextStyle(
+                                  color: Colors.orange.shade700,
+                                  fontSize: 14,
+                                ),
+                                textAlign: TextAlign.center,
+                              ),
+                            ],
+                          ),
+                        ),
                       ],
                     ],
                   ),
 
-                  const SizedBox(height: 16),
-
-                  // Nearest Ambulance Card (if found)
-                  if (assignmentState.nearestAmbulance != null)
-                    _buildAmbulanceAssignmentCard(assignmentState),
-
-                  const SizedBox(height: 24),
-
-                  // Action Buttons
-                  if (widget.emergency.status != EmergencyStatus.completed &&
-                      widget.emergency.status != EmergencyStatus.cancelled) ...[
+                  // Assignment Actions Section
+                  if (!widget.emergency.isAssigned &&
+                      !assignmentState.isLoading) ...[
+                    const SizedBox(height: 8),
                     Row(
                       children: [
-                        if (!widget.emergency.isAssigned) ...[
-                          Expanded(
-                            child: ElevatedButton.icon(
-                              onPressed:
-                                  isLoading ? null : _findNearestAmbulance,
-                              icon: const Icon(Icons.search),
-                              label: const Text('Find Ambulance'),
-                              style: ElevatedButton.styleFrom(
-                                backgroundColor: Colors.blue.shade700,
-                                foregroundColor: Colors.white,
-                              ),
+                        Expanded(
+                          child: ElevatedButton.icon(
+                            onPressed: _findNearestAmbulance,
+                            icon: const Icon(Icons.search),
+                            label: const Text('Find Ambulance'),
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: Colors.blue.shade700,
+                              foregroundColor: Colors.white,
+                              padding: const EdgeInsets.symmetric(vertical: 12),
                             ),
                           ),
-                          const SizedBox(width: 12),
-                          Expanded(
-                            child: ElevatedButton.icon(
-                              onPressed: isLoading
-                                  ? null
-                                  : _autoAssignNearestAmbulance,
-                              icon: const Icon(Icons.auto_fix_high),
-                              label: const Text('Auto-Assign'),
-                              style: ElevatedButton.styleFrom(
-                                backgroundColor: Colors.green.shade700,
-                                foregroundColor: Colors.white,
-                              ),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: ElevatedButton.icon(
+                            onPressed: _autoAssignNearestAmbulance,
+                            icon: const Icon(Icons.auto_fix_high),
+                            label: const Text('Auto-Assign'),
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: Colors.green.shade700,
+                              foregroundColor: Colors.white,
+                              padding: const EdgeInsets.symmetric(vertical: 12),
                             ),
                           ),
-                        ] else ...[
-                          Expanded(
-                            child: ElevatedButton.icon(
-                              onPressed: isLoading ? null : _completeEmergency,
-                              icon: const Icon(Icons.check_circle),
-                              label: const Text('Mark Complete'),
-                              style: ElevatedButton.styleFrom(
-                                backgroundColor: Colors.green.shade700,
-                                foregroundColor: Colors.white,
-                              ),
-                            ),
-                          ),
-                        ],
+                        ),
                       ],
                     ),
                   ],
 
-                  const SizedBox(height: 16),
+                  // Assignment Loading State
+                  if (assignmentState.isLoading)
+                    _buildLoadingIndicator(assignmentState.statusMessage),
 
-                  // Loading indicator
-                  if (isLoading)
-                    const Center(
-                      child: Column(
-                        children: [
-                          CircularProgressIndicator(),
-                          SizedBox(height: 16),
-                          Text('Processing ambulance assignment...'),
-                        ],
-                      ),
+                  // Assignment Error State
+                  if (assignmentState.error != null)
+                    _buildErrorDisplay(
+                      assignmentState.error!,
+                      () => ref
+                          .read(emergencyAssignmentProvider.notifier)
+                          .resetState(),
                     ),
 
-                  // Error message
-                  if (assignmentState.error != null)
-                    Container(
-                      width: double.infinity,
-                      padding: const EdgeInsets.all(16),
-                      decoration: BoxDecoration(
-                        color: Colors.red.shade50,
-                        borderRadius: BorderRadius.circular(8),
-                        border: Border.all(color: Colors.red.shade200),
-                      ),
-                      child: Row(
-                        children: [
-                          Icon(Icons.error, color: Colors.red.shade700),
-                          const SizedBox(width: 8),
-                          Expanded(
-                            child: Text(
-                              assignmentState.error!,
-                              style: TextStyle(color: Colors.red.shade700),
+                  // Nearby Ambulances List
+                  if (assignmentState.hasNearbyAmbulances &&
+                      !widget.emergency.isAssigned) ...[
+                    const SizedBox(height: 16),
+                    _buildInfoCard(
+                      title:
+                          'Available Ambulances (${assignmentState.nearbyAmbulances!.length})',
+                      icon: Icons.local_shipping,
+                      headerColor: Colors.blue.shade700,
+                      children: [
+                        ...assignmentState.nearbyAmbulances!
+                            .map((ambulance) => _buildAmbulanceRow(ambulance))
+                            .toList(),
+                        const SizedBox(height: 8),
+                        if (assignmentState.selectedAmbulance != null)
+                          SizedBox(
+                            width: double.infinity,
+                            child: ElevatedButton.icon(
+                              onPressed: () => _assignAmbulance(
+                                  assignmentState.selectedAmbulance!),
+                              icon: const Icon(Icons.assignment),
+                              label: Text(
+                                'Assign ${assignmentState.selectedAmbulance!.licensePlate}',
+                              ),
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: Colors.green.shade700,
+                                foregroundColor: Colors.white,
+                                padding:
+                                    const EdgeInsets.symmetric(vertical: 12),
+                              ),
                             ),
                           ),
-                        ],
+                      ],
+                    ),
+                  ],
+
+                  // Completion Actions for Assigned Emergencies
+                  if (widget.emergency.isAssigned &&
+                      !widget.emergency.isCompleted) ...[
+                    const SizedBox(height: 16),
+                    SizedBox(
+                      width: double.infinity,
+                      child: ElevatedButton.icon(
+                        onPressed: _completeEmergency,
+                        icon: const Icon(Icons.check_circle),
+                        label: const Text('Mark Emergency Complete'),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: Colors.green.shade700,
+                          foregroundColor: Colors.white,
+                          padding: const EdgeInsets.symmetric(vertical: 16),
+                        ),
                       ),
                     ),
+                  ],
+
+                  const SizedBox(height: 24),
                 ],
               ),
             ),
@@ -384,13 +419,19 @@ class _EmergencyDetailsScreenState
     );
   }
 
+  // =============================================================================
+  // UI HELPER METHODS (From Module 2)
+  // =============================================================================
+
   Widget _buildInfoCard({
     required String title,
     required IconData icon,
     required List<Widget> children,
+    Color? headerColor,
   }) {
     return Card(
       elevation: 2,
+      margin: const EdgeInsets.only(bottom: 16),
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
       child: Padding(
         padding: const EdgeInsets.all(16),
@@ -399,14 +440,15 @@ class _EmergencyDetailsScreenState
           children: [
             Row(
               children: [
-                Icon(icon, color: Colors.blue.shade700),
-                const SizedBox(width: 8),
+                Icon(icon,
+                    color: headerColor ?? Colors.blue.shade700, size: 24),
+                const SizedBox(width: 12),
                 Text(
                   title,
                   style: TextStyle(
                     fontSize: 18,
                     fontWeight: FontWeight.bold,
-                    color: Colors.blue.shade700,
+                    color: headerColor ?? Colors.blue.shade700,
                   ),
                 ),
               ],
@@ -427,29 +469,29 @@ class _EmergencyDetailsScreenState
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Icon(icon, size: 20, color: statusColor ?? Colors.grey.shade600),
-          const SizedBox(width: 8),
+          const SizedBox(width: 12),
           Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  label,
-                  style: TextStyle(
-                    fontSize: 12,
-                    color: Colors.grey.shade600,
-                    fontWeight: FontWeight.w500,
-                  ),
-                ),
-                const SizedBox(height: 2),
-                Text(
-                  value,
-                  style: TextStyle(
-                    fontSize: 14,
-                    fontWeight: FontWeight.w600,
-                    color: statusColor ?? Colors.black87,
-                  ),
-                ),
-              ],
+            flex: 2,
+            child: Text(
+              label,
+              style: TextStyle(
+                fontWeight: FontWeight.w500,
+                color: Colors.grey.shade700,
+                fontSize: 14,
+              ),
+            ),
+          ),
+          Expanded(
+            flex: 3,
+            child: Text(
+              value,
+              style: TextStyle(
+                color: statusColor ?? Colors.grey.shade900,
+                fontWeight:
+                    statusColor != null ? FontWeight.w600 : FontWeight.normal,
+                fontSize: 14,
+              ),
+              textAlign: TextAlign.end,
             ),
           ),
         ],
@@ -457,191 +499,223 @@ class _EmergencyDetailsScreenState
     );
   }
 
-  Widget _buildAmbulanceAssignmentCard(
-      EmergencyAssignmentState assignmentState) {
-    final ambulance = assignmentState.nearestAmbulance!;
-    final distance = assignmentState.distance;
+  Widget _buildAmbulanceRow(AmbulanceModel ambulance) {
+    final assignmentState = ref.watch(emergencyAssignmentProvider);
+    final isSelected = assignmentState.selectedAmbulance?.id == ambulance.id;
 
-    return Card(
-      elevation: 3,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
+    return Container(
+      margin: const EdgeInsets.only(bottom: 8),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: isSelected ? Colors.blue.shade50 : Colors.grey.shade50,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(
+          color: isSelected ? Colors.blue.shade300 : Colors.grey.shade300,
+        ),
+      ),
+      child: InkWell(
+        onTap: () => ref
+            .read(emergencyAssignmentProvider.notifier)
+            .selectAmbulance(ambulance),
+        child: Row(
           children: [
-            Row(
-              children: [
-                Container(
-                  padding: const EdgeInsets.all(8),
-                  decoration: BoxDecoration(
-                    color: Colors.blue.withOpacity(0.1),
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  child: Icon(
-                    Icons.local_shipping,
-                    color: Colors.blue.shade700,
-                    size: 24,
-                  ),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        'Nearest Ambulance Found',
-                        style: TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.bold,
-                          color: Colors.blue.shade700,
-                        ),
-                      ),
-                      Text(
-                        ambulance.licensePlate,
-                        style: const TextStyle(
-                          fontSize: 18,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                      Text(
-                        ambulance.model,
-                        style: TextStyle(
-                          color: Colors.grey.shade600,
-                        ),
-                      ),
-                      if (distance != null)
-                        Text(
-                          'Distance: ${distance.toStringAsFixed(2)} km',
-                          style: TextStyle(
-                            color: Colors.grey.shade600,
-                            fontSize: 12,
-                          ),
-                        ),
-                    ],
-                  ),
-                ),
-              ],
+            Icon(
+              Icons.local_shipping,
+              color: isSelected ? Colors.blue.shade700 : Colors.grey.shade600,
             ),
-            const SizedBox(height: 16),
-
-            // Assignment status and buttons
-            if (!assignmentState.isAssigned && !assignmentState.isLoading) ...[
-              // Driver validation
-              if (ambulance.currentDriverId == null ||
-                  ambulance.currentDriverId!.isEmpty) ...[
-                Container(
-                  padding: const EdgeInsets.all(12),
-                  decoration: BoxDecoration(
-                    color: Colors.orange.shade50,
-                    borderRadius: BorderRadius.circular(8),
-                    border: Border.all(color: Colors.orange.shade200),
-                  ),
-                  child: Row(
-                    children: [
-                      Icon(Icons.warning, color: Colors.orange.shade700),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: Text(
-                          'This ambulance has no assigned driver. Please assign a driver first.',
-                          style: TextStyle(color: Colors.orange.shade700),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ] else ...[
-                // Ready to assign
-                SizedBox(
-                  width: double.infinity,
-                  child: ElevatedButton.icon(
-                    onPressed: () => _assignAmbulance(ambulance),
-                    icon: const Icon(Icons.assignment),
-                    label: const Text(
-                      'Assign This Ambulance\n(Route will be created)',
-                      textAlign: TextAlign.center,
-                    ),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: Colors.green.shade700,
-                      foregroundColor: Colors.white,
-                      padding: const EdgeInsets.symmetric(vertical: 12),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    ambulance.licensePlate,
+                    style: TextStyle(
+                      fontWeight: FontWeight.bold,
+                      color: isSelected ? Colors.blue.shade700 : Colors.black,
                     ),
                   ),
-                ),
-              ],
-            ],
-
-            if (assignmentState.isLoading) ...[
-              Container(
-                padding: const EdgeInsets.all(16),
-                child: const Row(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    CircularProgressIndicator(),
-                    SizedBox(width: 16),
-                    Text('Assigning ambulance and creating route...'),
-                  ],
+                  Text(
+                    ambulance.model,
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: Colors.grey.shade600,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            if (assignmentState.distance != null)
+              Text(
+                '${(assignmentState.distance! / 1000).toStringAsFixed(1)} km',
+                style: TextStyle(
+                  fontSize: 12,
+                  color: Colors.grey.shade600,
                 ),
               ),
-            ],
-
-            if (assignmentState.isAssigned) ...[
-              Container(
-                width: double.infinity,
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  color: Colors.green.shade50,
-                  borderRadius: BorderRadius.circular(8),
-                  border: Border.all(color: Colors.green.shade200),
-                ),
-                child: Row(
-                  children: [
-                    Icon(Icons.check_circle, color: Colors.green.shade700),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: Text(
-                        '✅ Ambulance assigned successfully!\n📍 Route created and police notified',
-                        style: TextStyle(
-                          color: Colors.green.shade700,
-                          fontWeight: FontWeight.w500,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ],
+            if (isSelected)
+              Icon(Icons.check_circle, color: Colors.blue.shade700),
           ],
         ),
       ),
     );
   }
 
+  Widget _buildLoadingIndicator(String message) {
+    return Container(
+      padding: const EdgeInsets.all(20),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const CircularProgressIndicator(),
+          const SizedBox(height: 16),
+          Text(
+            message,
+            style: TextStyle(fontSize: 14, color: Colors.grey.shade600),
+            textAlign: TextAlign.center,
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildErrorDisplay(String error, VoidCallback? onRetry) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(16),
+      margin: const EdgeInsets.symmetric(vertical: 8),
+      decoration: BoxDecoration(
+        color: Colors.red.shade50,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: Colors.red.shade200),
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Row(
+            children: [
+              Icon(Icons.error_outline, color: Colors.red.shade700),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Text(error,
+                    style: TextStyle(color: Colors.red.shade700, fontSize: 14)),
+              ),
+            ],
+          ),
+          if (onRetry != null) ...[
+            const SizedBox(height: 12),
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton.icon(
+                onPressed: onRetry,
+                icon: const Icon(Icons.refresh, size: 16),
+                label: const Text('Retry'),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.red.shade600,
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(vertical: 8),
+                ),
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  String _formatDateTime(DateTime dateTime) {
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    final dateOnly = DateTime(dateTime.year, dateTime.month, dateTime.day);
+
+    final timeStr = '${dateTime.hour.toString().padLeft(2, '0')}:'
+        '${dateTime.minute.toString().padLeft(2, '0')}';
+
+    if (dateOnly.isAtSameMomentAs(today)) {
+      return 'Today $timeStr';
+    } else if (dateOnly
+        .isAtSameMomentAs(today.subtract(const Duration(days: 1)))) {
+      return 'Yesterday $timeStr';
+    } else {
+      return '${dateTime.day}/${dateTime.month}/${dateTime.year} $timeStr';
+    }
+  }
+
+  void _showComingSoon(String feature) {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: Row(
+          children: [
+            Icon(Icons.construction, color: Colors.orange.shade600),
+            const SizedBox(width: 12),
+            const Text('Coming Soon'),
+          ],
+        ),
+        content: Text('$feature functionality is coming soon!'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Got it'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showDeleteDialog() {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: Row(
+          children: [
+            Icon(Icons.warning, color: Colors.red.shade600),
+            const SizedBox(width: 12),
+            const Text('Delete Emergency'),
+          ],
+        ),
+        content: const Text(
+          'Are you sure you want to delete this emergency? This action cannot be undone.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () async {
+              Navigator.pop(context);
+              await _deleteEmergency();
+            },
+            style:
+                ElevatedButton.styleFrom(backgroundColor: Colors.red.shade600),
+            child: const Text('Delete', style: TextStyle(color: Colors.white)),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // =============================================================================
+  // ACTION METHODS (Using Enhanced Providers from Module 1)
+  // =============================================================================
+
   Future<void> _findNearestAmbulance() async {
     try {
-      print('🔍 Finding nearest ambulance...');
-
-      // Get current user to determine hospital ID
       final currentUser = await ref.read(currentUserProvider.future);
       if (currentUser?.roleSpecificData.hospitalId == null) {
         throw Exception('Hospital ID not found');
       }
 
       final hospitalId = currentUser!.roleSpecificData.hospitalId!;
-
-      // Use the assignment provider to find nearest ambulance
-      final assignmentNotifier = ref.read(emergencyAssignmentProvider.notifier);
-
-      await assignmentNotifier.findNearestAmbulance(
-        hospitalId: hospitalId,
-        patientLat: widget.emergency.patientLat,
-        patientLng: widget.emergency.patientLng,
-      );
-
-      print('✅ Nearest ambulance search completed');
+      await ref.read(emergencyAssignmentProvider.notifier).findNearestAmbulance(
+            hospitalId: hospitalId,
+            patientLat: widget.emergency.patientLat,
+            patientLng: widget.emergency.patientLng,
+          );
     } catch (e) {
-      print('❌ Error finding nearest ambulance: $e');
-
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
@@ -653,116 +727,65 @@ class _EmergencyDetailsScreenState
     }
   }
 
-  Future<void> _assignAmbulance(AmbulanceModel ambulance) async {
-    try {
-      print('🚀 Starting ambulance assignment with route creation');
-
-      // Use the updated emergency assignment provider
-      final assignmentNotifier = ref.read(emergencyAssignmentProvider.notifier);
-
-      // Ensure ambulance has a driver
-      if (ambulance.currentDriverId == null ||
-          ambulance.currentDriverId!.isEmpty) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text(
-                'Cannot assign ambulance: No driver assigned to this ambulance'),
-            backgroundColor: Colors.red,
-          ),
-        );
-        return;
-      }
-
-      // Call the enhanced assignment method that creates routes
-      final success = await assignmentNotifier.assignAmbulance(
-        emergencyId: widget.emergency.id,
-        ambulanceId: ambulance.id,
-        driverId: ambulance.currentDriverId!,
-      );
-
-      if (success && mounted) {
-        print('✅ Ambulance assigned successfully with route creation');
-
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              '🚑 Ambulance ${ambulance.licensePlate} assigned successfully!\n'
-              '📍 Route has been calculated and sent to police',
-            ),
-            backgroundColor: Colors.green,
-            duration: const Duration(seconds: 4),
-          ),
-        );
-
-        // Navigate back to the previous screen
-        Navigator.pop(context);
-      } else {
-        print('❌ Ambulance assignment failed');
-        throw Exception('Assignment failed - please try again');
-      }
-    } catch (e) {
-      print('❌ Assignment error: $e');
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Failed to assign ambulance: $e'),
-            backgroundColor: Colors.red,
-            duration: const Duration(seconds: 4),
-          ),
-        );
-      }
-    }
-  }
-
   Future<void> _autoAssignNearestAmbulance() async {
     try {
-      print('🎯 Auto-assigning nearest ambulance with route creation...');
-
-      // Get current user to determine hospital ID
       final currentUser = await ref.read(currentUserProvider.future);
       if (currentUser?.roleSpecificData.hospitalId == null) {
         throw Exception('Hospital ID not found');
       }
 
       final hospitalId = currentUser!.roleSpecificData.hospitalId!;
-
-      // Use the assignment provider for auto-assignment
-      final assignmentNotifier = ref.read(emergencyAssignmentProvider.notifier);
-
-      final success = await assignmentNotifier.autoAssignNearestAmbulance(
-        emergencyId: widget.emergency.id,
-        hospitalId: hospitalId,
-      );
+      final success = await ref
+          .read(emergencyAssignmentProvider.notifier)
+          .autoAssignNearestAmbulance(
+            emergencyId: widget.emergency.id,
+            hospitalId: hospitalId,
+          );
 
       if (success && mounted) {
-        print('✅ Auto-assignment completed successfully with route creation');
-
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text(
-              '🎯 Nearest ambulance auto-assigned successfully!\n'
-              '📍 Route calculated and police notified',
-            ),
-            backgroundColor: Colors.green,
-            duration: Duration(seconds: 4),
-          ),
-        );
-
-        // Navigate back
         Navigator.pop(context);
-      } else {
-        throw Exception(
-            'Auto-assignment failed - no available ambulances found');
       }
     } catch (e) {
-      print('❌ Auto-assignment error: $e');
-
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text('Auto-assignment failed: $e'),
             backgroundColor: Colors.red,
-            duration: const Duration(seconds: 4),
+          ),
+        );
+      }
+    }
+  }
+
+  Future<void> _assignAmbulance(AmbulanceModel ambulance) async {
+    try {
+      if (ambulance.currentDriverId == null ||
+          ambulance.currentDriverId!.isEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Cannot assign ambulance: No driver assigned'),
+            backgroundColor: Colors.red,
+          ),
+        );
+        return;
+      }
+
+      final success =
+          await ref.read(emergencyAssignmentProvider.notifier).assignAmbulance(
+                emergencyId: widget.emergency.id,
+                ambulanceId: ambulance.id,
+                driverId: ambulance.currentDriverId!,
+              );
+
+      if (success && mounted) {
+        Navigator.pop(context);
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Failed to assign ambulance: $e'),
+            backgroundColor: Colors.red,
           ),
         );
       }
@@ -795,55 +818,29 @@ class _EmergencyDetailsScreenState
     }
   }
 
-  void _showDeleteDialog() {
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Delete Emergency'),
-        content: const Text(
-          'Are you sure you want to delete this emergency? This action cannot be undone.',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Cancel'),
-          ),
-          ElevatedButton(
-            onPressed: () async {
-              Navigator.pop(context);
-              final actions = ref.read(emergencyActionsProvider);
-              final success =
-                  await actions.deleteEmergency(widget.emergency.id);
-              if (success && context.mounted) {
-                Navigator.pop(context);
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(
-                    content: Text('Emergency deleted successfully'),
-                  ),
-                );
-              }
-            },
-            style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
-            child: const Text('Delete', style: TextStyle(color: Colors.white)),
-          ),
-        ],
-      ),
-    );
-  }
+  Future<void> _deleteEmergency() async {
+    try {
+      final actions = ref.read(emergencyActionsProvider);
+      final success = await actions.deleteEmergency(widget.emergency.id);
 
-  void _showComingSoon(String feature) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text('$feature feature coming soon!'),
-        backgroundColor: Colors.blue,
-        behavior: SnackBarBehavior.floating,
-      ),
-    );
-  }
-
-  String _formatDateTime(DateTime dateTime) {
-    return '${dateTime.day}/${dateTime.month}/${dateTime.year} '
-        '${dateTime.hour.toString().padLeft(2, '0')}:'
-        '${dateTime.minute.toString().padLeft(2, '0')}';
+      if (success && mounted) {
+        Navigator.pop(context);
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Emergency deleted successfully'),
+            backgroundColor: Colors.green,
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Failed to delete emergency: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
   }
 }

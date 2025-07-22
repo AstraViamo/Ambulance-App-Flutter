@@ -39,7 +39,7 @@ class EmergencyService {
       await _notificationService.sendEmergencyNotificationToHospital(
         hospitalId: emergency.hospitalId,
         emergencyId: docRef.id,
-        priority: emergency.priority,
+        priority: emergency.priority.value,
         description: emergency.description,
         location: emergency.patientAddressString,
       );
@@ -461,6 +461,68 @@ class EmergencyService {
       return null;
     } catch (e) {
       log('Error getting place details: $e');
+      return null;
+    }
+  }
+
+  Future<List<PlaceSuggestion>> searchPlaces(String query) async {
+    try {
+      final encodedQuery = Uri.encodeComponent(query);
+      final url = 'https://maps.googleapis.com/maps/api/place/autocomplete/json'
+          '?input=$encodedQuery'
+          '&key=$_placesApiKey'
+          '&types=address'
+          '&components=country:ke'; // Restrict to Kenya
+
+      final response = await http.get(Uri.parse(url));
+
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
+        final predictions = data['predictions'] as List;
+
+        return predictions
+            .map((prediction) => PlaceSuggestion.fromJson(prediction))
+            .toList();
+      } else {
+        throw Exception('Failed to search places: ${response.statusCode}');
+      }
+    } catch (e) {
+      log('Error searching places: $e');
+      return [];
+    }
+  }
+
+  /// Validate coordinates
+  bool isValidCoordinate(double? lat, double? lng) {
+    if (lat == null || lng == null) return false;
+
+    // Kenya approximate bounds
+    // Latitude: -4.7 to 5.5
+    // Longitude: 33.9 to 41.9
+    return lat >= -5.0 && lat <= 6.0 && lng >= 33.0 && lng <= 42.0;
+  }
+
+  /// Get current location name (reverse geocoding)
+  Future<String?> getLocationName(double latitude, double longitude) async {
+    try {
+      final url = 'https://maps.googleapis.com/maps/api/geocode/json'
+          '?latlng=$latitude,$longitude'
+          '&key=$_placesApiKey'
+          '&language=en';
+
+      final response = await http.get(Uri.parse(url));
+
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
+
+        if (data['status'] == 'OK' && data['results'].isNotEmpty) {
+          return data['results'][0]['formatted_address'] as String?;
+        }
+      }
+
+      return null;
+    } catch (e) {
+      log('Error getting location name: $e');
       return null;
     }
   }

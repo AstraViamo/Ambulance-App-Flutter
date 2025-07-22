@@ -96,27 +96,24 @@ class _EmergencyListScreenState extends ConsumerState<EmergencyListScreen>
           ),
           PopupMenuButton<EmergencySortOption>(
             icon: const Icon(Icons.sort, color: Colors.white),
+            tooltip: 'Sort emergencies',
             onSelected: (option) {
               ref.read(emergencySortOptionProvider.notifier).state = option;
             },
-            itemBuilder: (context) => [
-              const PopupMenuItem(
-                value: EmergencySortOption.newest,
-                child: Text('Newest First'),
-              ),
-              const PopupMenuItem(
-                value: EmergencySortOption.oldest,
-                child: Text('Oldest First'),
-              ),
-              const PopupMenuItem(
-                value: EmergencySortOption.priority,
-                child: Text('By Priority'),
-              ),
-              const PopupMenuItem(
-                value: EmergencySortOption.status,
-                child: Text('By Status'),
-              ),
-            ],
+            itemBuilder: (context) => EmergencySortOption.values
+                .map(
+                  (option) => PopupMenuItem(
+                    value: option,
+                    child: Row(
+                      children: [
+                        Icon(option.icon, size: 16),
+                        const SizedBox(width: 8),
+                        Text(option.displayName),
+                      ],
+                    ),
+                  ),
+                )
+                .toList(),
           ),
         ],
         bottom: TabBar(
@@ -300,9 +297,7 @@ class _EmergencyListScreenState extends ConsumerState<EmergencyListScreen>
   }
 
   Widget _buildEmergencyList(String hospitalId, {required bool activeOnly}) {
-    final emergenciesAsync = activeOnly
-        ? ref.watch(sortedEmergenciesProvider(hospitalId))
-        : ref.watch(sortedEmergenciesProvider(hospitalId));
+    final emergenciesAsync = ref.watch(sortedEmergenciesProvider(hospitalId));
 
     return emergenciesAsync.when(
       data: (emergencies) {
@@ -392,8 +387,8 @@ class _EmergencyListScreenState extends ConsumerState<EmergencyListScreen>
         ref.refresh(emergenciesProvider(hospitalId!));
       },
       child: ListView.builder(
-        padding: const EdgeInsets.symmetric(horizontal: 16),
         itemCount: emergencies.length,
+        padding: const EdgeInsets.symmetric(horizontal: 16),
         itemBuilder: (context, index) {
           final emergency = emergencies[index];
           return _buildEmergencyCard(emergency);
@@ -408,12 +403,13 @@ class _EmergencyListScreenState extends ConsumerState<EmergencyListScreen>
 
     return Card(
       margin: const EdgeInsets.only(bottom: 12),
-      elevation: emergency.isCritical ? 4 : 2,
+      elevation: 2,
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(12),
-        side: emergency.isCritical
-            ? BorderSide(color: Colors.red.shade700, width: 2)
-            : BorderSide.none,
+        side: BorderSide(
+          color: emergency.priorityColor.withOpacity(0.3),
+          width: 1,
+        ),
       ),
       child: InkWell(
         onTap: () => _navigateToEmergencyDetails(emergency),
@@ -423,113 +419,86 @@ class _EmergencyListScreenState extends ConsumerState<EmergencyListScreen>
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              // Header row
+              // Header with priority and status
               Row(
                 children: [
+                  // FIXED: Use new priorityBadge method
                   Container(
-                    padding: const EdgeInsets.all(8),
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                     decoration: BoxDecoration(
-                      color: priorityColor.withOpacity(0.1),
-                      borderRadius: BorderRadius.circular(8),
+                      color: emergency.priorityColor.withOpacity(0.1),
+                      border: Border.all(color: emergency.priorityColor),
+                      borderRadius: BorderRadius.circular(4),
                     ),
-                    child: Icon(
-                      Icons.emergency,
-                      color: priorityColor,
-                      size: 20,
+                    child: Text(
+                      emergency.priorityBadge,
+                      style: TextStyle(
+                        fontSize: 11,
+                        fontWeight: FontWeight.bold,
+                        color: emergency.priorityColor,
+                      ),
                     ),
                   ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Row(
-                          children: [
-                            Text(
-                              emergency.callerName,
-                              style: const TextStyle(
-                                fontSize: 16,
-                                fontWeight: FontWeight.bold,
-                              ),
-                            ),
-                            if (emergency.isCritical) ...[
-                              const SizedBox(width: 8),
-                              Container(
-                                padding: const EdgeInsets.symmetric(
-                                    horizontal: 6, vertical: 2),
-                                decoration: BoxDecoration(
-                                  color: Colors.red.shade700,
-                                  borderRadius: BorderRadius.circular(8),
-                                ),
-                                child: const Text(
-                                  'CRITICAL',
-                                  style: TextStyle(
-                                    color: Colors.white,
-                                    fontSize: 10,
-                                    fontWeight: FontWeight.bold,
-                                  ),
-                                ),
-                              ),
-                            ],
-                          ],
-                        ),
-                        Text(
-                          emergency.callerPhone,
-                          style: TextStyle(
-                            fontSize: 12,
-                            color: Colors.grey.shade600,
-                          ),
-                        ),
-                      ],
+                  const SizedBox(width: 8),
+                  Container(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: emergency.statusColor.withOpacity(0.1),
+                      border: Border.all(color: emergency.statusColor),
+                      borderRadius: BorderRadius.circular(4),
+                    ),
+                    child: Text(
+                      emergency.statusDisplayName,
+                      style: TextStyle(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w500,
+                        color: emergency.statusColor,
+                      ),
                     ),
                   ),
-                  Column(
-                    crossAxisAlignment: CrossAxisAlignment.end,
-                    children: [
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 8, vertical: 4),
-                        decoration: BoxDecoration(
-                          color: priorityColor,
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                        child: Text(
-                          emergency.priorityDisplayName,
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontSize: 11,
-                            fontWeight: FontWeight.w500,
-                          ),
-                        ),
-                      ),
-                      const SizedBox(height: 4),
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 8, vertical: 4),
-                        decoration: BoxDecoration(
-                          color: statusColor,
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                        child: Text(
-                          emergency.statusDisplayName,
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontSize: 10,
-                            fontWeight: FontWeight.w500,
-                          ),
-                        ),
-                      ),
-                    ],
+                  const Spacer(),
+                  // FIXED: Use new timeSinceCreated method
+                  Text(
+                    emergency.timeSinceCreated,
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: Colors.grey.shade600,
+                    ),
                   ),
                 ],
               ),
 
               const SizedBox(height: 12),
 
+              // Caller information
+              Row(
+                children: [
+                  Icon(Icons.person, size: 16, color: Colors.grey.shade600),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      emergency.callerSummary,
+                      style: const TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+
+              const SizedBox(height: 8),
+
               // Description
               Text(
-                emergency.description,
-                style: const TextStyle(fontSize: 14),
+                emergency.descriptionSummary,
+                style: TextStyle(
+                  fontSize: 13,
+                  color: Colors.grey.shade700,
+                  height: 1.3,
+                ),
                 maxLines: 2,
                 overflow: TextOverflow.ellipsis,
               ),
@@ -541,10 +510,10 @@ class _EmergencyListScreenState extends ConsumerState<EmergencyListScreen>
                 children: [
                   Icon(Icons.location_on,
                       size: 16, color: Colors.grey.shade600),
-                  const SizedBox(width: 4),
+                  const SizedBox(width: 8),
                   Expanded(
                     child: Text(
-                      emergency.patientAddressString,
+                      emergency.locationSummary,
                       style: TextStyle(
                         fontSize: 12,
                         color: Colors.grey.shade600,
@@ -556,21 +525,22 @@ class _EmergencyListScreenState extends ConsumerState<EmergencyListScreen>
                 ],
               ),
 
-              const SizedBox(height: 8),
+              const SizedBox(height: 12),
 
-              // Footer row
+              // Status information
               Row(
                 children: [
                   Icon(Icons.access_time,
                       size: 14, color: Colors.grey.shade500),
                   const SizedBox(width: 4),
                   Text(
-                    emergency.timeSinceCreated,
+                    emergency.formattedCreatedAt,
                     style: TextStyle(
                       fontSize: 11,
                       color: Colors.grey.shade500,
                     ),
                   ),
+                  // FIXED: Use new isAssigned method
                   if (emergency.isAssigned) ...[
                     const SizedBox(width: 16),
                     Icon(Icons.local_shipping,
@@ -585,16 +555,40 @@ class _EmergencyListScreenState extends ConsumerState<EmergencyListScreen>
                       ),
                     ),
                   ],
+                  // FIXED: Use new estimatedResponseTime method
                   if (emergency.estimatedResponseTime != null) ...[
                     const SizedBox(width: 16),
-                    Icon(Icons.timer, size: 14, color: Colors.orange.shade600),
+                    Icon(
+                      emergency.isOverdue ? Icons.warning : Icons.timer,
+                      size: 14,
+                      color: emergency.isOverdue
+                          ? Colors.red.shade600
+                          : Colors.orange.shade600,
+                    ),
                     const SizedBox(width: 4),
                     Text(
                       'ETA: ${emergency.estimatedResponseTime}',
                       style: TextStyle(
                         fontSize: 11,
-                        color: Colors.orange.shade600,
+                        color: emergency.isOverdue
+                            ? Colors.red.shade600
+                            : Colors.orange.shade600,
                         fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                  ],
+                  // Show if needs immediate attention
+                  if (emergency.needsImmediateAttention) ...[
+                    const SizedBox(width: 16),
+                    Icon(Icons.priority_high,
+                        size: 14, color: Colors.red.shade600),
+                    const SizedBox(width: 4),
+                    Text(
+                      'URGENT',
+                      style: TextStyle(
+                        fontSize: 11,
+                        color: Colors.red.shade600,
+                        fontWeight: FontWeight.bold,
                       ),
                     ),
                   ],
@@ -626,6 +620,7 @@ class _EmergencyListScreenState extends ConsumerState<EmergencyListScreen>
     ).then((result) {
       if (result == true) {
         ref.refresh(emergenciesProvider(hospitalId!));
+        ref.refresh(emergencyStatsProvider(hospitalId!));
       }
     });
   }
@@ -636,6 +631,9 @@ class _EmergencyListScreenState extends ConsumerState<EmergencyListScreen>
       MaterialPageRoute(
         builder: (context) => EmergencyDetailsScreen(emergency: emergency),
       ),
-    );
+    ).then((_) {
+      ref.refresh(emergenciesProvider(hospitalId!));
+      ref.refresh(emergencyStatsProvider(hospitalId!));
+    });
   }
 }

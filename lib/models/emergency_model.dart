@@ -1,4 +1,6 @@
 // lib/models/emergency_model.dart
+import 'dart:ui';
+
 import 'package:cloud_firestore/cloud_firestore.dart';
 
 enum EmergencyPriority {
@@ -298,8 +300,14 @@ class EmergencyModel {
   }
 
   // Helper getters
+
   bool get isAssigned => assignedAmbulanceId != null;
   bool get isPending => status == EmergencyStatus.pending;
+  bool get isCompleted => status == EmergencyStatus.completed;
+  bool get isCancelled => status == EmergencyStatus.cancelled;
+  bool get isEnRoute => status == EmergencyStatus.enRoute;
+  bool get hasArrived => status == EmergencyStatus.arrived;
+
   bool get isActive =>
       status != EmergencyStatus.completed &&
       status != EmergencyStatus.cancelled;
@@ -311,19 +319,65 @@ class EmergencyModel {
   String get priorityDisplayName => priority.displayName;
   String get statusDisplayName => status.displayName;
 
+  Color get priorityColor => Color(priority.colorValue);
+  Color get statusColor => Color(status.colorValue);
+
+  /// Get formatted creation date and time
+  String get formattedCreatedAt {
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    final emergencyDate =
+        DateTime(createdAt.year, createdAt.month, createdAt.day);
+
+    if (emergencyDate.isAtSameMomentAs(today)) {
+      // Today - show time only
+      return '${createdAt.hour.toString().padLeft(2, '0')}:${createdAt.minute.toString().padLeft(2, '0')}';
+    } else if (emergencyDate
+        .isAtSameMomentAs(today.subtract(const Duration(days: 1)))) {
+      // Yesterday
+      return 'Yesterday ${createdAt.hour.toString().padLeft(2, '0')}:${createdAt.minute.toString().padLeft(2, '0')}';
+    } else {
+      // Older - show date
+      return '${createdAt.day}/${createdAt.month}/${createdAt.year}';
+    }
+  }
+
+  Duration? get responseTime {
+    if (assignedAt == null) return null;
+    return assignedAt!.difference(createdAt);
+  }
+
+  /// Get total resolution time (from creation to completion)
+  Duration? get totalTime {
+    if (actualArrival == null) return null;
+    return actualArrival!.difference(createdAt);
+  }
+
+  /// Get formatted response time
+  String? get formattedResponseTime {
+    final response = responseTime;
+    if (response == null) return null;
+
+    if (response.inHours > 0) {
+      return '${response.inHours}h ${response.inMinutes % 60}m';
+    } else {
+      return '${response.inMinutes}m';
+    }
+  }
+
   // Get formatted time since creation
   String get timeSinceCreated {
     final now = DateTime.now();
     final difference = now.difference(createdAt);
 
-    if (difference.inMinutes < 1) {
-      return 'Just now';
-    } else if (difference.inMinutes < 60) {
-      return '${difference.inMinutes}m ago';
-    } else if (difference.inHours < 24) {
-      return '${difference.inHours}h ago';
-    } else {
+    if (difference.inDays > 0) {
       return '${difference.inDays}d ago';
+    } else if (difference.inHours > 0) {
+      return '${difference.inHours}h ago';
+    } else if (difference.inMinutes > 0) {
+      return '${difference.inMinutes}m ago';
+    } else {
+      return 'Just now';
     }
   }
 
@@ -342,6 +396,68 @@ class EmergencyModel {
       return '${timeToArrival.inHours}h ${timeToArrival.inMinutes % 60}m';
     }
   }
+
+  /// Get emergency urgency indicator for sorting and display
+  int get urgencyScore {
+    int priorityScore = priority.urgencyLevel * 10;
+
+    // Add bonus for time sensitivity
+    final hoursSinceCreated = DateTime.now().difference(createdAt).inHours;
+    int timeBonus = (hoursSinceCreated * 0.5).round();
+
+    return priorityScore + timeBonus;
+  }
+
+  /// Check if emergency is overdue (past estimated arrival time)
+  bool get isOverdue {
+    if (estimatedArrival == null || isCompleted || isCancelled) return false;
+    return DateTime.now().isAfter(estimatedArrival!);
+  }
+
+  /// Get patient location summary
+  String get locationSummary {
+    if (patientAddressString.length <= 50) {
+      return patientAddressString;
+    }
+    return '${patientAddressString.substring(0, 47)}...';
+  }
+
+  /// Get caller information summary
+  String get callerSummary => '$callerName ($callerPhone)';
+
+  /// Get emergency priority badge text
+  String get priorityBadge {
+    switch (priority) {
+      case EmergencyPriority.critical:
+        return '🚨 CRITICAL';
+      case EmergencyPriority.high:
+        return '⚠️ HIGH';
+      case EmergencyPriority.medium:
+        return '📋 MEDIUM';
+      case EmergencyPriority.low:
+        return '📝 LOW';
+    }
+  }
+
+  /// Get emergency description summary (truncated if too long)
+  String get descriptionSummary {
+    if (description.length <= 100) {
+      return description;
+    }
+    return '${description.substring(0, 97)}...';
+  }
+
+  /// Check if emergency needs immediate attention
+  bool get needsImmediateAttention {
+    return (priority == EmergencyPriority.critical ||
+            priority == EmergencyPriority.high) &&
+        isActive &&
+        !isAssigned;
+  }
+
+  /// Get coordinates as a formatted string
+  String get coordinatesString =>
+      '${patientLat.toStringAsFixed(6)}, ${patientLng.toStringAsFixed(6)}';
 
   @override
   String toString() {

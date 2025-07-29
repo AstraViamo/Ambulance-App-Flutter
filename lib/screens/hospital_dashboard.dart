@@ -88,8 +88,9 @@ class _HospitalDashboardState extends ConsumerState<HospitalDashboard> {
             NavigationService.getBottomNavigationItems(ref, user.role);
 
         return Scaffold(
-          appBar: _buildAppBar(),
-          body: _buildCurrentPage(),
+          // Only show app bar for dashboard (index 0)
+          appBar: _currentBottomIndex == 0 ? _buildAppBar() : null,
+          body: SafeArea(child: _buildCurrentPage()),
           bottomNavigationBar: BottomNavigationBar(
             type: BottomNavigationBarType.fixed,
             currentIndex: _currentBottomIndex,
@@ -108,38 +109,13 @@ class _HospitalDashboardState extends ConsumerState<HospitalDashboard> {
   }
 
   AppBar _buildAppBar() {
-    String title;
-    Color backgroundColor;
-
-    switch (_currentBottomIndex) {
-      case 0:
-        title = 'Hospital Dashboard';
-        backgroundColor = Colors.red.shade700;
-        break;
-      case 1:
-        title = 'Emergency Management';
-        backgroundColor = Colors.orange.shade700;
-        break;
-      case 2:
-        title = 'Route Management';
-        backgroundColor = Colors.blue.shade700;
-        break;
-      case 3:
-        title = 'Live Map';
-        backgroundColor = Colors.green.shade700;
-        break;
-      default:
-        title = 'Hospital Dashboard';
-        backgroundColor = Colors.red.shade700;
-    }
-
+    // Only used for dashboard now - remove color switching
     return AppBar(
-      title: Text(
-        title,
-        style:
-            const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+      title: const Text(
+        'Hospital Dashboard',
+        style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
       ),
-      backgroundColor: backgroundColor,
+      backgroundColor: Colors.red.shade700,
       iconTheme: const IconThemeData(color: Colors.white),
       actions: [
         IconButton(
@@ -193,7 +169,7 @@ class _HospitalDashboardState extends ConsumerState<HospitalDashboard> {
       case 0:
         return _buildDashboardOverview();
       case 1:
-        return EmergencyListScreen();
+        return const EmergencyListScreen();
       case 2:
         return _buildRouteManagement();
       case 3:
@@ -210,226 +186,285 @@ class _HospitalDashboardState extends ConsumerState<HospitalDashboard> {
     final activeRoutesAsync =
         ref.watch(hospitalActiveRoutesProvider(hospitalId!));
 
-    return SingleChildScrollView(
-      padding: const EdgeInsets.all(16),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          // Welcome Section
-          Card(
-            child: Padding(
-              padding: const EdgeInsets.all(16),
-              child: Row(
-                children: [
-                  Icon(Icons.local_hospital,
-                      size: 40, color: Colors.red.shade700),
-                  const SizedBox(width: 16),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          'Welcome to Hospital Dashboard',
-                          style: TextStyle(
-                            fontSize: 18,
-                            fontWeight: FontWeight.bold,
-                            color: Colors.red.shade700,
-                          ),
-                        ),
-                        const SizedBox(height: 4),
-                        Text(
-                          'Monitor and manage emergency services',
-                          style: TextStyle(color: Colors.grey.shade600),
-                        ),
-                      ],
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-
-          const SizedBox(height: 16),
-
-          // Emergency Statistics
-          Card(
-            child: Padding(
-              padding: const EdgeInsets.all(16),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        return SingleChildScrollView(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // Welcome Section
+              Card(
+                child: Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: Row(
                     children: [
-                      Icon(Icons.emergency, color: Colors.orange.shade700),
-                      const SizedBox(width: 8),
-                      const Text(
-                        'Emergency Statistics',
-                        style: TextStyle(
-                            fontSize: 18, fontWeight: FontWeight.bold),
+                      Icon(Icons.local_hospital,
+                          size: 40, color: Colors.red.shade700),
+                      const SizedBox(width: 16),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              'Welcome to Hospital Dashboard',
+                              style: TextStyle(
+                                fontSize: 18,
+                                fontWeight: FontWeight.bold,
+                                color: Colors.red.shade700,
+                              ),
+                            ),
+                            const SizedBox(height: 4),
+                            Text(
+                              'Monitor and manage emergency services',
+                              style: TextStyle(color: Colors.grey.shade600),
+                            ),
+                          ],
+                        ),
                       ),
                     ],
                   ),
-                  const SizedBox(height: 16),
-                  emergencyStats.when(
-                    data: (stats) => _buildEmergencyStatsGrid(stats),
-                    loading: () =>
-                        const Center(child: CircularProgressIndicator()),
-                    error: (error, stack) => Text('Error: $error'),
-                  ),
-                ],
+                ),
               ),
-            ),
-          ),
 
-          const SizedBox(height: 16),
+              const SizedBox(height: 16),
 
-          // Route Statistics
-          Card(
-            child: Padding(
-              padding: const EdgeInsets.all(16),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    children: [
-                      Icon(Icons.route, color: Colors.blue.shade700),
-                      const SizedBox(width: 8),
-                      const Text(
-                        'Route Statistics',
-                        style: TextStyle(
-                            fontSize: 18, fontWeight: FontWeight.bold),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 16),
-                  _buildRouteStatsGrid(hospitalStats),
-                ],
-              ),
-            ),
-          ),
-
-          const SizedBox(height: 16),
-
-          // Active Routes Preview
-          Card(
-            child: Padding(
-              padding: const EdgeInsets.all(16),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              // Emergency Statistics
+              Card(
+                child: Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Row(
                         children: [
-                          Icon(Icons.local_shipping,
-                              color: Colors.green.shade700),
+                          Icon(Icons.emergency, color: Colors.red.shade700),
                           const SizedBox(width: 8),
                           const Text(
-                            'Active Routes',
+                            'Emergency Statistics',
                             style: TextStyle(
                                 fontSize: 18, fontWeight: FontWeight.bold),
                           ),
                         ],
                       ),
-                      TextButton(
-                        onPressed: () =>
-                            setState(() => _currentBottomIndex = 2),
-                        child: const Text('View All'),
+                      const SizedBox(height: 16),
+                      emergencyStats.when(
+                        data: (stats) =>
+                            _buildEmergencyStatsGrid(stats, constraints),
+                        loading: () =>
+                            const Center(child: CircularProgressIndicator()),
+                        error: (error, stack) => Text('Error: $error'),
                       ),
                     ],
                   ),
-                  const SizedBox(height: 16),
-                  activeRoutesAsync.when(
-                    data: (routes) {
-                      if (routes.isEmpty) {
-                        return const Center(
-                          child: Padding(
-                            padding: EdgeInsets.all(20),
-                            child: Text('No active routes at the moment'),
-                          ),
-                        );
-                      }
-                      // Show only first 3 routes in preview
-                      final previewRoutes = routes.take(3).toList();
-                      return Column(
-                        children: previewRoutes
-                            .map((route) => _buildRoutePreviewCard(route))
-                            .toList(),
-                      );
-                    },
-                    loading: () =>
-                        const Center(child: CircularProgressIndicator()),
-                    error: (error, stack) => Text('Error: $error'),
-                  ),
-                ],
+                ),
               ),
+
+              const SizedBox(height: 16),
+
+              // Route Statistics
+              Card(
+                child: Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          Icon(Icons.route, color: Colors.blue.shade700),
+                          const SizedBox(width: 8),
+                          const Text(
+                            'Route Statistics',
+                            style: TextStyle(
+                                fontSize: 18, fontWeight: FontWeight.bold),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 16),
+                      _buildRouteStatsGrid(hospitalStats, constraints),
+                    ],
+                  ),
+                ),
+              ),
+
+              const SizedBox(height: 16),
+
+              // Active Routes Preview
+              Card(
+                child: Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          Row(
+                            children: [
+                              Icon(Icons.local_shipping,
+                                  color: Colors.green.shade700),
+                              const SizedBox(width: 8),
+                              const Text(
+                                'Active Routes',
+                                style: TextStyle(
+                                    fontSize: 18, fontWeight: FontWeight.bold),
+                              ),
+                            ],
+                          ),
+                          TextButton(
+                            onPressed: () =>
+                                setState(() => _currentBottomIndex = 2),
+                            child: const Text('View All'),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 16),
+                      activeRoutesAsync.when(
+                        data: (routes) {
+                          if (routes.isEmpty) {
+                            return const Center(
+                              child: Padding(
+                                padding: EdgeInsets.all(20),
+                                child: Text('No active routes at the moment'),
+                              ),
+                            );
+                          }
+                          // Show only first 3 routes in preview
+                          final previewRoutes = routes.take(3).toList();
+                          return Column(
+                            children: previewRoutes
+                                .map((route) => _buildRoutePreviewCard(route))
+                                .toList(),
+                          );
+                        },
+                        loading: () =>
+                            const Center(child: CircularProgressIndicator()),
+                        error: (error, stack) => Text('Error: $error'),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+
+              // Quick Actions
+              const SizedBox(height: 16),
+              Card(
+                child: Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text(
+                        'Quick Actions',
+                        style: TextStyle(
+                            fontSize: 18, fontWeight: FontWeight.bold),
+                      ),
+                      const SizedBox(height: 16),
+                      _buildQuickActionsGrid(constraints),
+                    ],
+                  ),
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildQuickActionsGrid(BoxConstraints constraints) {
+    // Responsive grid for quick actions
+    if (constraints.maxWidth > 600) {
+      // Wide screen - single row
+      return Row(
+        children: [
+          Expanded(
+            child: _buildQuickActionButton(
+              'View Emergencies',
+              Icons.emergency,
+              Colors.orange.shade700,
+              () => setState(() => _currentBottomIndex = 1),
             ),
           ),
-
-          // Quick Actions
-          const SizedBox(height: 16),
-          Card(
-            child: Padding(
-              padding: const EdgeInsets.all(16),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Text(
-                    'Quick Actions',
-                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-                  ),
-                  const SizedBox(height: 16),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: _buildQuickActionButton(
-                          'View Emergencies',
-                          Icons.emergency,
-                          Colors.orange.shade700,
-                          () => setState(() => _currentBottomIndex = 1),
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: _buildQuickActionButton(
-                          'Manage Routes',
-                          Icons.route,
-                          Colors.blue.shade700,
-                          () => setState(() => _currentBottomIndex = 2),
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 8),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: _buildQuickActionButton(
-                          'Live Map',
-                          Icons.map,
-                          Colors.green.shade700,
-                          () => setState(() => _currentBottomIndex = 3),
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: _buildQuickActionButton(
-                          'Ambulances',
-                          Icons.local_shipping,
-                          Colors.purple.shade700,
-                          () => _navigateToAmbulanceList(),
-                        ),
-                      ),
-                    ],
-                  ),
-                ],
-              ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: _buildQuickActionButton(
+              'Manage Routes',
+              Icons.route,
+              Colors.blue.shade700,
+              () => setState(() => _currentBottomIndex = 2),
+            ),
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: _buildQuickActionButton(
+              'Live Map',
+              Icons.map,
+              Colors.green.shade700,
+              () => setState(() => _currentBottomIndex = 3),
+            ),
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: _buildQuickActionButton(
+              'Ambulances',
+              Icons.local_shipping,
+              Colors.purple.shade700,
+              () => _navigateToAmbulanceList(),
             ),
           ),
         ],
-      ),
-    );
+      );
+    } else {
+      // Narrow screen - two rows
+      return Column(
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: _buildQuickActionButton(
+                  'View Emergencies',
+                  Icons.emergency,
+                  Colors.orange.shade700,
+                  () => setState(() => _currentBottomIndex = 1),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: _buildQuickActionButton(
+                  'Manage Routes',
+                  Icons.route,
+                  Colors.blue.shade700,
+                  () => setState(() => _currentBottomIndex = 2),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Row(
+            children: [
+              Expanded(
+                child: _buildQuickActionButton(
+                  'Live Map',
+                  Icons.map,
+                  Colors.green.shade700,
+                  () => setState(() => _currentBottomIndex = 3),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: _buildQuickActionButton(
+                  'Ambulances',
+                  Icons.local_shipping,
+                  Colors.purple.shade700,
+                  () => _navigateToAmbulanceList(),
+                ),
+              ),
+            ],
+          ),
+        ],
+      );
+    }
   }
 
   Widget _buildRouteManagement() {
@@ -562,32 +597,85 @@ class _HospitalDashboardState extends ConsumerState<HospitalDashboard> {
 
   // Helper Methods
 
-  Widget _buildEmergencyStatsGrid(Map<String, int> stats) {
-    return Row(
-      children: [
-        _buildStatCard('Total', stats['total'] ?? 0, Colors.blue),
-        const SizedBox(width: 8),
-        _buildStatCard('Active', stats['active'] ?? 0, Colors.orange),
-        const SizedBox(width: 8),
-        _buildStatCard('Critical', stats['critical'] ?? 0, Colors.red),
-        const SizedBox(width: 8),
-        _buildStatCard('Completed', stats['completed'] ?? 0, Colors.green),
-      ],
-    );
+  Widget _buildEmergencyStatsGrid(
+      Map<String, int> stats, BoxConstraints constraints) {
+    // Responsive stats grid
+    if (constraints.maxWidth > 600) {
+      // Wide screen - single row
+      return Row(
+        children: [
+          _buildStatCard('Total', stats['total'] ?? 0, Colors.blue),
+          const SizedBox(width: 8),
+          _buildStatCard('Active', stats['active'] ?? 0, Colors.orange),
+          const SizedBox(width: 8),
+          _buildStatCard('Critical', stats['critical'] ?? 0, Colors.red),
+          const SizedBox(width: 8),
+          _buildStatCard('Completed', stats['completed'] ?? 0, Colors.green),
+        ],
+      );
+    } else {
+      // Narrow screen - two rows
+      return Column(
+        children: [
+          Row(
+            children: [
+              _buildStatCard('Total', stats['total'] ?? 0, Colors.blue),
+              const SizedBox(width: 8),
+              _buildStatCard('Active', stats['active'] ?? 0, Colors.orange),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Row(
+            children: [
+              _buildStatCard('Critical', stats['critical'] ?? 0, Colors.red),
+              const SizedBox(width: 8),
+              _buildStatCard(
+                  'Completed', stats['completed'] ?? 0, Colors.green),
+            ],
+          ),
+        ],
+      );
+    }
   }
 
-  Widget _buildRouteStatsGrid(Map<String, int> stats) {
-    return Row(
-      children: [
-        _buildStatCard('Total', stats['total'] ?? 0, Colors.blue),
-        const SizedBox(width: 8),
-        _buildStatCard('En Route', stats['enRoute'] ?? 0, Colors.orange),
-        const SizedBox(width: 8),
-        _buildStatCard('Cleared', stats['cleared'] ?? 0, Colors.green),
-        const SizedBox(width: 8),
-        _buildStatCard('Pending', stats['pending'] ?? 0, Colors.amber),
-      ],
-    );
+  Widget _buildRouteStatsGrid(
+      Map<String, int> stats, BoxConstraints constraints) {
+    // Responsive stats grid
+    if (constraints.maxWidth > 600) {
+      // Wide screen - single row
+      return Row(
+        children: [
+          _buildStatCard('Total', stats['total'] ?? 0, Colors.blue),
+          const SizedBox(width: 8),
+          _buildStatCard('En Route', stats['enRoute'] ?? 0, Colors.orange),
+          const SizedBox(width: 8),
+          _buildStatCard('Cleared', stats['cleared'] ?? 0, Colors.green),
+          const SizedBox(width: 8),
+          _buildStatCard('Pending', stats['pending'] ?? 0, Colors.amber),
+        ],
+      );
+    } else {
+      // Narrow screen - two rows
+      return Column(
+        children: [
+          Row(
+            children: [
+              _buildStatCard('Total', stats['total'] ?? 0, Colors.blue),
+              const SizedBox(width: 8),
+              _buildStatCard('En Route', stats['enRoute'] ?? 0, Colors.orange),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Row(
+            children: [
+              _buildStatCard('Cleared', stats['cleared'] ?? 0, Colors.green),
+              const SizedBox(width: 8),
+              _buildStatCard('Pending', stats['pending'] ?? 0, Colors.amber),
+            ],
+          ),
+        ],
+      );
+    }
   }
 
   Widget _buildStatCard(String title, int value, Color color) {
